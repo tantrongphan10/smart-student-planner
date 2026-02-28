@@ -1,0 +1,1647 @@
+<!DOCTYPE html>
+<!--
+╔══════════════════════════════════════════════════════════════╗
+║  Smart Student Planner AI – v11.0.0                         ║
+║  Single-file • Offline • phi3:mini via Ollama               ║
+╠══════════════════════════════════════════════════════════════╣
+║  CHANGELOG v11:                                             ║
+║  - SEC-8: Thêm difficulty(1-5), cognitiveLoad, bestTime     ║
+║    cho từng môn học                                         ║
+║  - SEC-9: Thuật toán xếp lịch hoàn toàn mới:               ║
+║    · Môn khó (diff≥4) → ưu tiên sáng sớm 6h-10h            ║
+║    · Môn thuộc lòng → tối 20h-22h                          ║
+║    · Môn sáng tạo → chiều 14h-17h                          ║
+║    · taskScore() tính thêm difficulty + cognitiveLoad       ║
+║    · Sau 2 môn khó liên tiếp → tự động thêm nghỉ 15p        ║
+║    · 2 môn khó liền → tự động chèn nghỉ 5p giữa            ║
+║    · fatigueScore() tính cognitiveLoad tích lũy             ║
+║    · Không xếp >3 slot hard liên tiếp trong 1 ngày         ║
+╚══════════════════════════════════════════════════════════════╝
+-->
+<html lang="vi" data-theme="light">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>📚 Smart Student Planner AI v11</title>
+<style>
+/* ═══════════════════════════════════════════════════════════
+   SEC-1: CSS VARIABLES, RESET, LAYOUT CHUNG
+═══════════════════════════════════════════════════════════ */
+:root{
+  --bg:#f0ebff;--surf:#fff;--surf2:#f7f3ff;--surf3:#ede9ff;
+  --pri:#7c3aed;--pri-l:#ede9fe;--pri-d:#5b21b6;
+  --acc:#f472b6;--grn:#10b981;--yel:#f59e0b;--red:#ef4444;--blue:#3b82f6;
+  --txt:#111827;--txt2:#6b7280;--brd:#e5e7eb;
+  --shd:0 2px 16px rgba(124,58,237,.12);--r:12px;
+  --font:'Segoe UI',system-ui,sans-serif;
+}
+[data-theme=dark]{
+  --bg:#0e0b1a;--surf:#17142a;--surf2:#1e1a33;--surf3:#252040;
+  --pri-l:#28204a;--txt:#ede9ff;--txt2:#9ca3af;--brd:#38305a;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:var(--font);background:var(--bg);color:var(--txt);
+  display:flex;flex-direction:column;font-size:15px;transition:background .25s,color .25s}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:var(--pri-l);border-radius:99px}
+
+/* Header */
+#hdr{flex-shrink:0;display:flex;align-items:center;gap:10px;
+  padding:10px 18px;background:var(--surf);border-bottom:2px solid var(--brd);
+  box-shadow:var(--shd);z-index:100}
+.logo{font-size:1.05rem;font-weight:800;color:var(--pri);white-space:nowrap}
+.logo em{color:var(--acc);font-style:normal}
+.hdr-r{display:flex;gap:6px;align-items:center;margin-left:auto;flex-wrap:wrap}
+.o-pill{display:flex;align-items:center;gap:5px;padding:5px 11px;border-radius:99px;
+  border:1.5px solid var(--brd);background:var(--surf2);font-size:.75rem;font-weight:700;
+  cursor:pointer;transition:all .2s;white-space:nowrap}
+.o-pill:hover{border-color:var(--pri)}
+.sdot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.dot-ok{background:var(--grn)}.dot-err{background:var(--red)}
+.dot-chk{background:var(--yel);animation:pulse .7s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* Tabs */
+#tabs{flex-shrink:0;display:flex;gap:2px;padding:8px 18px 0;
+  background:var(--surf);border-bottom:2px solid var(--brd);overflow-x:auto}
+.tab{padding:8px 14px;border:none;border-radius:9px 9px 0 0;background:transparent;
+  color:var(--txt2);font:700 .82rem var(--font);white-space:nowrap;cursor:pointer;transition:all .18s}
+.tab:hover{background:var(--pri-l);color:var(--pri)}
+.tab.on{background:var(--pri);color:#fff}
+.tab:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+/* Main + pages */
+#main{flex:1;overflow:hidden;display:flex;min-height:0}
+.page{display:none;flex:1;overflow:hidden;flex-direction:column;min-height:0}
+.page.on{display:flex}
+.scroll{flex:1;overflow-y:auto;padding:18px}
+
+/* Card */
+.card{background:var(--surf);border:1.5px solid var(--brd);border-radius:var(--r);
+  padding:16px;margin-bottom:14px;box-shadow:var(--shd)}
+.ct{font-size:.92rem;font-weight:700;color:var(--pri);margin-bottom:12px}
+
+/* Form elements */
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;align-items:flex-end}
+.fg{display:flex;flex-direction:column;gap:4px;flex:1;min-width:100px}
+.fg label{font-size:.72rem;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.3px}
+.fg input,.fg select,.fg textarea{padding:8px 11px;border:1.5px solid var(--brd);border-radius:8px;
+  background:var(--surf2);color:var(--txt);font:.87rem var(--font);transition:border .18s;outline:none}
+.fg input:focus,.fg select:focus,.fg textarea:focus{border-color:var(--pri)}
+.fg textarea{resize:vertical;min-height:52px}
+
+/* Buttons */
+.btn{padding:8px 15px;border:none;border-radius:8px;font:700 .84rem var(--font);
+  cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.btn:active{transform:scale(.95)}
+.btn:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.bp{background:var(--pri);color:#fff}.bp:hover{background:var(--pri-d)}
+.bg{background:var(--grn);color:#fff}
+.bgh{background:var(--pri-l);color:var(--pri)}.bgh:hover{background:var(--pri);color:#fff}
+.br{background:var(--red);color:#fff}
+.by{background:var(--yel);color:#fff}
+.bb{background:var(--blue);color:#fff}
+.sm{padding:5px 10px;font-size:.76rem}
+.bundo{background:#fef3c7;color:#92400e;border:1.5px solid #fbbf24}
+.bundo:hover{background:#fbbf24;color:#fff}
+
+/* Badge */
+.badge{padding:2px 8px;border-radius:99px;font-size:.69rem;font-weight:700}
+.bh{background:#fecaca;color:#991b1b}.bm{background:#fef3c7;color:#92400e}.bl{background:#d1fae5;color:#065f46}
+
+/* Difficulty badge – MỚI v11 */
+.diff-badge{padding:2px 7px;border-radius:99px;font-size:.65rem;font-weight:800;border:1.5px solid transparent}
+.diff-5{background:#fecaca;color:#991b1b;border-color:#f87171}
+.diff-4{background:#fed7aa;color:#9a3412;border-color:#fb923c}
+.diff-3{background:#fef3c7;color:#92400e;border-color:#fbbf24}
+.diff-2{background:#d1fae5;color:#065f46;border-color:#34d399}
+.diff-1{background:#e0e7ff;color:#3730a3;border-color:#818cf8}
+
+/* List item */
+.li{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:9px;
+  border:1.5px solid var(--brd);background:var(--surf2);margin-bottom:7px;font-size:.85rem}
+.li .n{flex:1;font-weight:600}
+.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+/* Toast */
+#toast{position:fixed;bottom:20px;right:20px;z-index:999;background:var(--pri);color:#fff;
+  padding:10px 18px;border-radius:10px;font-size:.84rem;font-weight:700;
+  box-shadow:var(--shd);display:none;animation:slideUp .25s ease}
+@keyframes slideUp{from{transform:translateY(12px);opacity:0}to{transform:none;opacity:1}}
+
+/* Toggle switch */
+.toggle-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--brd)}
+.toggle-row label{flex:1;font-size:.84rem;font-weight:600}
+input[type=checkbox].tgl{width:36px;height:20px;appearance:none;background:var(--brd);
+  border-radius:99px;cursor:pointer;position:relative;transition:background .2s;flex-shrink:0}
+input[type=checkbox].tgl:checked{background:var(--pri)}
+input[type=checkbox].tgl::after{content:'';position:absolute;width:14px;height:14px;
+  border-radius:50%;background:#fff;top:3px;left:3px;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+input[type=checkbox].tgl:checked::after{left:19px}
+
+/* ═══════════════════════════════════════════════════════════
+   SEC-2: CSS CALENDAR + TIMELINE
+═══════════════════════════════════════════════════════════ */
+#pg-cal{flex-direction:column}
+#cal-left{display:flex;flex-direction:column;min-height:0;flex:1}
+#cal-nav{flex-shrink:0;display:flex;align-items:center;gap:6px;padding:9px 12px;
+  border-bottom:1.5px solid var(--brd);background:var(--surf);flex-wrap:wrap}
+.wk-lbl{flex:1;text-align:center;font-weight:700;font-size:.88rem;min-width:120px}
+#weekGrid{flex:1;overflow:auto;padding:10px;
+  display:grid;grid-template-columns:repeat(7,1fr);gap:8px;align-content:start}
+.dc{background:var(--surf);border:1.5px solid var(--brd);border-radius:12px;
+  padding:10px 8px;min-height:300px;cursor:pointer;transition:all .2s;
+  display:flex;flex-direction:column;gap:4px;overflow:hidden}
+.dc:hover{border-color:var(--pri);box-shadow:0 4px 18px rgba(124,58,237,.18);transform:translateY(-2px)}
+.dc.today{border-color:var(--pri);background:var(--pri-l)}
+.dc.selected{border-color:var(--acc);box-shadow:0 0 0 3px rgba(244,114,182,.28)}
+.dc.blocked{background:repeating-linear-gradient(45deg,var(--surf2),var(--surf2) 4px,var(--surf3) 4px,var(--surf3) 8px);opacity:.7}
+.dh{text-align:center;font-weight:700;font-size:.7rem;color:var(--txt2);text-transform:uppercase}
+.dc.today .dh{color:var(--pri)}
+.dd{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:1.08rem;font-weight:800;margin:2px auto 5px}
+.dc.today .dd{background:var(--pri);color:#fff}
+.dc.selected .dd{background:var(--acc);color:#fff}
+.ce{border-radius:5px;padding:5px 8px;font-size:.72rem;font-weight:600;
+  overflow:hidden;border-left:3px solid transparent;cursor:pointer;
+  transition:filter .15s;flex-shrink:0;line-height:1.5}
+.ce:hover{filter:brightness(.88)}
+.ce.done{opacity:.35;text-decoration:line-through}
+.ce-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.ce-time{font-size:.63rem;opacity:.75;display:block}
+
+/* Difficulty indicator trong calendar chip – MỚI v11 */
+.ce-diff{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:3px;vertical-align:middle;flex-shrink:0}
+
+/* Day Overlay */
+#dayOverlay{position:fixed;inset:0;z-index:200;display:none}
+#dayOverlay.open{display:flex}
+#dayOverlayBackdrop{flex:1;background:rgba(0,0,0,.38);cursor:pointer}
+#dayOverlayPanel{width:min(520px,94vw);background:var(--surf2);
+  display:flex;flex-direction:column;height:100%;
+  box-shadow:-6px 0 32px rgba(0,0,0,.25);animation:slideInR .22s ease;overflow:hidden}
+@keyframes slideInR{from{transform:translateX(100%)}to{transform:translateX(0)}}
+#tl-hdr{flex-shrink:0;padding:10px 14px;background:var(--surf);
+  border-bottom:1.5px solid var(--brd);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#tl-hdr h3{flex:1;font-size:.9rem;font-weight:700;color:var(--pri)}
+.conflict-banner{background:#fef2f2;border:1.5px solid var(--red);border-radius:8px;
+  padding:8px 12px;font-size:.8rem;color:#991b1b;flex-shrink:0;
+  display:none;align-items:center;gap:8px;margin:6px 12px 0}
+.conflict-banner.show{display:flex}
+
+/* Cognitive load banner – MỚI v11 */
+.cogload-banner{border-radius:8px;padding:8px 12px;font-size:.8rem;flex-shrink:0;
+  display:none;align-items:center;gap:8px;margin:6px 12px 0;font-weight:600}
+.cogload-banner.show{display:flex}
+.cogload-low{background:#d1fae5;color:#065f46;border:1.5px solid #34d399}
+.cogload-med{background:#fef3c7;color:#92400e;border:1.5px solid #fbbf24}
+.cogload-high{background:#fef2f2;color:#991b1b;border:1.5px solid #f87171}
+
+#tl-body{flex:1;overflow-y:auto;padding:10px 12px 20px 54px;position:relative}
+#tl-inner{position:relative}
+.tl-hour{position:absolute;left:-46px;font-size:.66rem;color:var(--txt2);line-height:1;user-select:none}
+.tl-line{position:absolute;left:-3px;right:0;border-top:1px dashed var(--brd)}
+.tl-line-half{position:absolute;left:-3px;right:0;border-top:1px dotted var(--brd);opacity:.4}
+#tl-now-line{position:absolute;left:-3px;right:0;border-top:2.5px solid var(--red);
+  z-index:20;display:none;transition:top .5s linear}
+.tl-now-lbl{position:absolute;left:2px;top:-10px;font-size:.65rem;color:var(--red);
+  font-weight:700;background:var(--surf2);padding:1px 4px;border-radius:4px;white-space:nowrap}
+.tl-slot{position:absolute;left:0;right:4px;border-radius:8px;padding:5px 9px 16px;
+  font-size:.78rem;font-weight:600;cursor:grab;overflow:hidden;user-select:none;
+  transition:filter .15s,box-shadow .15s,opacity .15s;border:1.5px solid transparent;
+  display:flex;flex-direction:column;gap:1px}
+.tl-slot:hover{filter:brightness(.9);box-shadow:0 3px 10px rgba(0,0,0,.2)}
+.tl-slot.dragging{opacity:.4;cursor:grabbing}
+.tl-slot.done{opacity:.4;text-decoration:line-through}
+.tl-slot.conflict{border-color:var(--red)!important;box-shadow:0 0 0 2px rgba(239,68,68,.3)!important}
+.tl-slot.locked{cursor:not-allowed;border-style:dashed}
+/* Slot khó cao – viền đậm hơn – MỚI v11 */
+.tl-slot.hard-high{border-width:2.5px;border-style:solid}
+.ts-time{font-size:.65rem;opacity:.85;font-weight:500}
+.ts-name{font-size:.78rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ts-sub{font-size:.62rem;opacity:.7;font-style:italic}
+/* Difficulty indicator trong slot – MỚI v11 */
+.ts-diff{font-size:.6rem;font-weight:800;opacity:.9;letter-spacing:.5px}
+.ts-cb{position:absolute;right:6px;top:8px;width:14px;height:14px;accent-color:#fff;cursor:pointer;z-index:6}
+.ts-lock{position:absolute;right:24px;top:6px;font-size:.6rem;opacity:.7}
+.tl-resize-handle{position:absolute;bottom:0;left:0;right:0;height:12px;
+  cursor:ns-resize;border-radius:0 0 8px 8px;
+  background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;z-index:7}
+.tl-resize-handle::after{content:'';width:28px;height:3px;border-radius:3px;background:rgba(255,255,255,.5)}
+.drop-zone{position:absolute;left:0;right:4px;background:transparent;
+  border:2px dashed transparent;border-radius:6px;transition:all .15s;z-index:1}
+.drop-zone.drag-over{background:rgba(124,58,237,.1);border-color:var(--pri)}
+
+@media(max-width:900px){#weekGrid{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:600px){#weekGrid{grid-template-columns:repeat(3,1fr)}.dc{min-height:200px}.msg{max-width:92%}}
+
+/* ═══════════════════════════════════════════════════════════
+   SEC-3: CSS CHAT, FORM, MODAL, STATS
+═══════════════════════════════════════════════════════════ */
+#pg-ai{flex-direction:column}
+#chat-top{flex-shrink:0;padding:10px 18px;background:var(--surf);
+  border-bottom:1.5px solid var(--brd);display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#chat-top h3{font-size:.9rem;font-weight:700;color:var(--pri);flex:1}
+.parse-mode{font-size:.7rem;padding:3px 8px;border-radius:99px;font-weight:700}
+.mode-local{background:#d1fae5;color:#065f46}.mode-ai{background:#ede9fe;color:#5b21b6}
+#chatBox{flex:1;overflow-y:auto;padding:16px 18px;display:flex;flex-direction:column;gap:10px;min-height:0}
+.msg{max-width:82%;border-radius:14px;padding:10px 14px;font-size:.87rem;line-height:1.65;animation:msgIn .2s ease}
+@keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.msg.u{background:var(--pri);color:#fff;align-self:flex-end;border-bottom-right-radius:3px}
+.msg.a{background:var(--surf);border:1.5px solid var(--brd);align-self:flex-start;border-bottom-left-radius:3px}
+.msg.sys{background:var(--surf3);border:1.5px dashed var(--brd);align-self:center;color:var(--txt2);font-size:.76rem;max-width:92%;text-align:center}
+.src-badge{display:inline-block;font-size:.63rem;padding:1px 6px;border-radius:99px;margin-left:6px;font-weight:700;opacity:.8}
+.src-fast{background:#d1fae5;color:#065f46}.src-ai{background:#ede9fe;color:#5b21b6}.src-cache{background:#fef3c7;color:#92400e}
+.cursor::after{content:'▍';animation:blink .7s infinite}
+@keyframes blink{0%,50%{opacity:1}51%,100%{opacity:0}}
+.dots{display:flex;gap:4px;align-items:center;padding:2px 0}
+.dots span{width:7px;height:7px;border-radius:50%;background:var(--pri);animation:bou .8s infinite}
+.dots span:nth-child(2){animation-delay:.15s}.dots span:nth-child(3){animation-delay:.3s}
+@keyframes bou{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-7px)}}
+#suggestions{display:flex;gap:7px;flex-wrap:wrap;padding:8px 18px;flex-shrink:0;border-bottom:1px solid var(--brd)}
+.sugg{padding:5px 11px;border-radius:99px;border:1.5px solid var(--brd);background:var(--surf2);
+  color:var(--txt2);font-size:.75rem;font-weight:600;cursor:pointer;transition:all .18s}
+.sugg:hover{border-color:var(--pri);color:var(--pri);background:var(--pri-l)}
+#chat-inp{flex-shrink:0;display:flex;gap:8px;padding:12px 18px;background:var(--surf);border-top:1.5px solid var(--brd)}
+#chatIn{flex:1;padding:10px 13px;border:1.5px solid var(--brd);border-radius:10px;
+  background:var(--surf2);color:var(--txt);font:.88rem var(--font);outline:none;
+  resize:none;height:44px;max-height:100px;overflow-y:auto;transition:border .18s;line-height:1.4}
+#chatIn:focus{border-color:var(--pri)}
+.subj-btns{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
+.subj-btn{padding:4px 10px;border-radius:99px;border:1.5px solid var(--brd);
+  background:var(--surf2);color:var(--txt2);font-size:.73rem;font-weight:700;cursor:pointer;transition:all .15s}
+.subj-btn:hover,.subj-btn.on{border-color:var(--pri);color:var(--pri);background:var(--pri-l)}
+.pri-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:4px}
+.pri-btn{padding:5px 12px;border-radius:8px;border:1.5px solid var(--brd);
+  background:var(--surf2);font-size:.78rem;font-weight:700;cursor:pointer;transition:all .15s;color:var(--txt2)}
+.pri-btn.on-high{background:#fecaca;color:#991b1b;border-color:#f87171}
+.pri-btn.on-med{background:#fef3c7;color:#92400e;border-color:#fbbf24}
+.pri-btn.on-low{background:#d1fae5;color:#065f46;border-color:#34d399}
+.dpick{display:flex;gap:5px;flex-wrap:wrap}
+.dchip{width:31px;height:31px;border-radius:50%;border:1.5px solid var(--brd);background:var(--surf2);
+  color:var(--txt2);font-size:.74rem;font-weight:700;display:flex;align-items:center;
+  justify-content:center;cursor:pointer;transition:all .18s}
+.dchip.on{background:var(--pri);color:#fff;border-color:var(--pri)}
+.cpick{display:flex;gap:6px;flex-wrap:wrap}
+.copt{width:24px;height:24px;border-radius:50%;cursor:pointer;border:3px solid transparent;transition:border .18s}
+.copt.on{border-color:var(--txt)}
+.tip-b{background:#fef9c3;border:1.5px solid #f59e0b;border-radius:8px;padding:8px 12px;font-size:.79rem;color:#78350f;margin-top:6px}
+[data-theme=dark] .tip-b{background:#2a1f0a;color:var(--txt2)}
+.stat-tabs{display:flex;gap:4px;margin-bottom:14px;flex-wrap:wrap}
+.stat-tab{padding:7px 14px;border:1.5px solid var(--brd);border-radius:8px;
+  background:var(--surf2);color:var(--txt2);font-size:.8rem;font-weight:700;cursor:pointer;transition:all .15s}
+.stat-tab:hover{border-color:var(--pri);color:var(--pri)}
+.stat-tab.on{background:var(--pri);color:#fff;border-color:var(--pri)}
+.stat-section{display:none}.stat-section.on{display:block}
+.stat-cards{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px}
+.sc{background:var(--surf);border:1.5px solid var(--brd);border-radius:10px;padding:10px 14px;flex:1;min-width:80px}
+.sv{font-size:1.4rem;font-weight:800;color:var(--pri)}.sl{font-size:.71rem;color:var(--txt2);margin-top:1px}
+.prog{background:var(--brd);border-radius:99px;height:7px;overflow:hidden;margin-top:5px}
+.prog-b{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--pri),var(--acc));transition:width .4s}
+.stat-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.stat-bar-row .lbl{min-width:80px;font-size:.78rem;font-weight:600;color:var(--txt2);text-align:right}
+.stat-bar-row .bar-wrap{flex:1;background:var(--brd);border-radius:99px;height:14px;overflow:hidden;position:relative}
+.stat-bar-row .bar-fill{height:100%;border-radius:99px;transition:width .4s}
+.stat-bar-row .val{min-width:36px;font-size:.74rem;font-weight:700;color:var(--pri)}
+.code-b{background:var(--surf3);border:1.5px solid var(--brd);border-radius:8px;padding:8px 12px;
+  font-family:monospace;font-size:.8rem;color:var(--pri);position:relative;white-space:pre-wrap;word-break:break-all;line-height:1.6}
+.cpbtn{position:absolute;right:6px;top:6px;background:var(--pri-l);border:none;border-radius:5px;
+  padding:2px 7px;font-size:.68rem;color:var(--pri);font-weight:700;cursor:pointer}
+.demo-card{background:linear-gradient(135deg,var(--pri-l),#fce7f3);border:1.5px solid var(--acc);
+  border-radius:var(--r);padding:16px;margin-bottom:14px}
+.demo-card .ct{color:var(--pri-d)}
+.step{display:flex;gap:12px;margin-bottom:14px}
+.sn{width:28px;height:28px;border-radius:50%;background:var(--pri);color:#fff;font-weight:800;
+  font-size:.84rem;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+#editModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);
+  z-index:500;align-items:center;justify-content:center;padding:14px}
+#editModal.open{display:flex}
+.m-box{background:var(--surf);border-radius:14px;width:min(460px,100%);
+  box-shadow:0 20px 60px rgba(0,0,0,.35);overflow:hidden}
+.m-hdr{display:flex;align-items:center;padding:14px 18px;border-bottom:1.5px solid var(--brd);background:var(--surf2)}
+.m-hdr h3{flex:1;font-size:.95rem;font-weight:700;color:var(--pri)}
+.m-body{padding:16px 18px;max-height:70vh;overflow-y:auto}
+.m-ftr{display:flex;gap:8px;justify-content:flex-end;padding:12px 18px;border-top:1.5px solid var(--brd)}
+.conflict-alert{background:#fef2f2;border:1.5px solid var(--red);border-radius:8px;
+  padding:8px 12px;font-size:.8rem;color:#991b1b;margin-top:8px;display:none}
+.conflict-alert.show{display:block}
+#testOverlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:600;align-items:center;justify-content:center;padding:14px}
+#testOverlay.open{display:flex}
+#testBox{background:var(--surf);border-radius:14px;width:min(500px,100%);box-shadow:0 20px 60px rgba(0,0,0,.4);overflow:hidden;max-height:80vh;display:flex;flex-direction:column}
+#testBox .t-hdr{display:flex;align-items:center;padding:12px 16px;background:var(--surf2);border-bottom:1.5px solid var(--brd)}
+#testBox .t-hdr h3{flex:1;font-size:.92rem;font-weight:700;color:var(--pri)}
+#testResults{flex:1;overflow-y:auto;padding:12px 16px;font-family:monospace;font-size:.8rem;line-height:1.9}
+.tr-pass{color:var(--grn);font-weight:700}.tr-fail{color:var(--red);font-weight:700}.tr-info{color:var(--txt2)}
+#debugPanel{background:var(--surf3);border:1.5px solid var(--brd);border-radius:var(--r);
+  padding:14px;margin-bottom:14px;font-family:monospace;font-size:.78rem;line-height:1.8;
+  color:var(--txt2);max-height:260px;overflow-y:auto}
+#debugPanel strong{color:var(--pri)}
+</style>
+</head>
+<body>
+
+<!-- SEC-4: HEADER + TABS -->
+<div id="hdr">
+  <div class="logo">📚 Smart <em>Student</em> Planner <span style="color:var(--grn);font-size:.8em">AI v11</span></div>
+  <div class="hdr-r">
+    <div class="o-pill" onclick="checkOllama(true)">
+      <div class="sdot dot-chk" id="sDot"></div>
+      <span id="sTxt">Kết nối…</span>
+    </div>
+    <button class="btn bundo sm" id="btnUndo" onclick="applyUndo()" style="display:none" title="Ctrl+Z">↩ Hoàn tác</button>
+    <button class="btn bgh sm" id="btnDark" onclick="toggleDark()">🌙</button>
+    <button class="btn bp sm" onclick="runScheduler()">⚡ Xếp lịch</button>
+  </div>
+</div>
+
+<div id="tabs" role="tablist">
+  <button class="tab on" role="tab" onclick="goTo('cal',this)">📅 Lịch tuần</button>
+  <button class="tab" role="tab" onclick="goTo('ai',this)">🤖 AI Chat</button>
+  <button class="tab" role="tab" onclick="goTo('ev',this)">📌 Sự kiện</button>
+  <button class="tab" role="tab" onclick="goTo('tk',this)">📝 Công việc</button>
+  <button class="tab" role="tab" onclick="goTo('stats',this)">📊 Thống kê</button>
+  <button class="tab" role="tab" onclick="goTo('setup',this)">⚙️ Cài đặt</button>
+</div>
+
+<div id="main">
+
+<!-- TRANG LỊCH TUẦN -->
+<div class="page on" id="pg-cal">
+  <div id="cal-left">
+    <div id="cal-nav">
+      <button class="btn bgh sm" onclick="chgWeek(-1)">◀</button>
+      <span class="wk-lbl" id="wkLbl"></span>
+      <button class="btn bgh sm" onclick="chgWeek(1)">▶</button>
+      <button class="btn bgh sm" onclick="chgWeek(0,'today')">Hôm nay</button>
+      <button class="btn bp sm" onclick="runScheduler()">⚡</button>
+    </div>
+    <div id="weekGrid"></div>
+  </div>
+  <div id="cal-right">
+    <div id="tl-hdr">
+      <h3 id="tlTitle">← Nhấp vào ngày để xem chi tiết</h3>
+      <button class="btn bgh sm" onclick="openEditNew()">➕ Thêm</button>
+    </div>
+    <div id="conflictBanner" class="conflict-banner">⚠️ <span id="conflictMsg"></span></div>
+    <!-- Cognitive Load Banner – MỚI v11 -->
+    <div id="cogloadBanner" class="cogload-banner"><span id="cogloadMsg"></span></div>
+    <div id="tl-placeholder" style="display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:10px;color:var(--txt2)">
+      <div style="font-size:2rem">📅</div>
+      <div style="font-weight:700;color:var(--pri)">Chọn một ngày để xem lịch chi tiết</div>
+      <div style="font-size:.8rem">Nhấp vào bất kỳ ô nào bên trái</div>
+      <button class="btn bp sm" onclick="runScheduler()">⚡ Xếp lịch ngay</button>
+    </div>
+    <div id="tl-body" style="display:none">
+      <div id="tl-inner">
+        <div id="tl-now-line"><span class="tl-now-lbl" id="nowLbl">Bây giờ</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TRANG AI CHAT -->
+<div class="page" id="pg-ai">
+  <div id="chat-top">
+    <h3>🤖 AI Chat <span style="font-size:.7rem;color:var(--txt2)">(phi3:mini)</span></h3>
+    <span id="parseModeBadge" class="parse-mode mode-local">⚡ Tức thì</span>
+    <button class="btn bgh sm" onclick="clearChatHistory()">🗑️ Xóa</button>
+  </div>
+  <div id="suggestions">
+    <div class="sugg" onclick="quickSend(this)">Thêm bài Toán 60 phút</div>
+    <div class="sugg" onclick="quickSend(this)">Mai bận chiều</div>
+    <div class="sugg" onclick="quickSend(this)">Hôm nay tôi có gì?</div>
+    <div class="sugg" onclick="quickSend(this)">Mệt, giảm lịch đi</div>
+    <div class="sugg" onclick="quickSend(this)">Lời khuyên học tập</div>
+  </div>
+  <div id="chatBox"></div>
+  <div id="chat-inp">
+    <textarea id="chatIn" placeholder="Nhập yêu cầu… (Enter gửi, Shift+Enter xuống dòng)"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+    <button class="btn bp" id="btnSend" onclick="sendChat()">Gửi 🚀</button>
+  </div>
+</div>
+
+<!-- TRANG SỰ KIỆN -->
+<div class="page" id="pg-ev">
+  <div class="scroll">
+    <div class="card">
+      <div class="ct">➕ Thêm sự kiện</div>
+      <div class="row">
+        <div class="fg" style="flex:2"><label>Tên sự kiện</label><input id="ev_n" placeholder="Đi học, Ăn cơm…"/></div>
+        <div class="fg"><label>Loại</label>
+          <select id="ev_t" onchange="toggleFlex()">
+            <option value="fixed">📌 Cố định</option>
+            <option value="flex">🔀 Linh hoạt</option>
+          </select></div>
+        <div class="fg"><label>Ưu tiên</label>
+          <select id="ev_p"><option value="high">🔴 Cao</option><option value="med" selected>🟡 TB</option><option value="low">🟢 Thấp</option></select></div>
+      </div>
+      <div id="ui_fix">
+        <div class="row">
+          <div class="fg"><label>Bắt đầu</label><input type="time" id="ev_s" value="07:00"/></div>
+          <div class="fg"><label>Kết thúc</label><input type="time" id="ev_e" value="11:30"/></div>
+        </div>
+      </div>
+      <div id="ui_flex" style="display:none">
+        <div class="row">
+          <div class="fg"><label>Sớm nhất</label><input type="time" id="ev_es" value="17:30"/></div>
+          <div class="fg"><label>Muộn nhất</label><input type="time" id="ev_le" value="20:00"/></div>
+          <div class="fg"><label>Thời lượng (phút)</label><input type="number" id="ev_fd" value="30" min="5" step="5"/></div>
+        </div>
+      </div>
+      <div class="row" style="align-items:center">
+        <div class="fg"><label>Lặp lại ngày</label><div class="dpick" id="dayPick"></div></div>
+        <div class="fg" style="max-width:130px"><label>Màu</label><div class="cpick" id="colPick"></div></div>
+      </div>
+      <div class="toggle-row" style="margin-bottom:10px">
+        <label>🔒 Khóa (không cho kéo thả)</label>
+        <input type="checkbox" class="tgl" id="ev_lock" checked/>
+      </div>
+      <button class="btn bp" onclick="addEvent()">➕ Thêm sự kiện</button>
+    </div>
+    <div class="card">
+      <div class="ct">📋 Danh sách sự kiện (<span id="evCount">0</span>)</div>
+      <div id="evList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- TRANG CÔNG VIỆC -->
+<div class="page" id="pg-tk">
+  <div class="scroll">
+    <div class="card">
+      <div class="ct">➕ Thêm công việc</div>
+      <div class="row">
+        <div class="fg" style="flex:2"><label>Tên công việc</label>
+          <input id="tk_n" placeholder="Làm 5 bài Toán, Viết văn, Ôn từ vựng…" oninput="autoDetectSubject(this.value)"/></div>
+        <div class="fg" style="max-width:130px"><label>Thời lượng (phút)</label>
+          <input type="number" id="tk_d" value="60" min="10" max="360" step="5"/></div>
+      </div>
+      <div class="fg" style="margin-bottom:10px">
+        <label>Môn học <span id="subjectAutoLabel" style="color:var(--grn);font-size:.7rem"></span></label>
+        <div class="subj-btns" id="subjBtns"></div>
+      </div>
+      <div class="row">
+        <div class="fg"><label>Mức độ quan trọng</label>
+          <div class="pri-btns" id="priBtns">
+            <div class="pri-btn" data-pri="high" onclick="selectPri('high')">🔴 Cao</div>
+            <div class="pri-btn on-med" data-pri="med" onclick="selectPri('med')">🟡 TB</div>
+            <div class="pri-btn" data-pri="low" onclick="selectPri('low')">🟢 Thấp</div>
+          </div>
+        </div>
+      </div>
+      <div class="row">
+        <div class="fg"><label>📅 Bắt đầu làm từ ngày</label><input type="date" id="tk_dfrom"/></div>
+        <div class="fg"><label>🏁 Hạn chót (đến ngày)</label><input type="date" id="tk_dto"/></div>
+      </div>
+      <div class="row">
+        <div class="fg"><label>Khung giờ ưu tiên</label>
+          <select id="tk_pref">
+            <option value="auto">🤖 Tự động (theo độ khó)</option>
+            <option value="morning">🌅 Sáng (6h–12h)</option>
+            <option value="afternoon">🌤️ Chiều (12h–18h)</option>
+            <option value="evening">🌙 Tối (18h–22h)</option>
+          </select></div>
+        <div class="fg" style="max-width:160px"><label>Ghi chú</label>
+          <input id="tk_note" placeholder="Ghi chú thêm…"/></div>
+      </div>
+      <button class="btn bg" onclick="addTask()">➕ Thêm công việc</button>
+    </div>
+    <div class="card">
+      <div class="ct">📋 Công việc (<span id="tkCount">0</span>)</div>
+      <div style="display:flex;gap:7px;margin-bottom:12px;flex-wrap:wrap">
+        <select id="schedMode" style="padding:6px 10px;border:1.5px solid var(--brd);border-radius:8px;background:var(--surf2);color:var(--txt);font:.82rem var(--font)">
+          <option value="greedy">⚡ Greedy (nhanh)</option>
+          <option value="optimized">🧠 Optimized (tối ưu độ khó)</option>
+        </select>
+        <button class="btn bp sm" onclick="runScheduler()">⚡ Xếp lịch</button>
+        <button class="btn bgh sm" onclick="clearDone()">🗑️ Xóa đã xong</button>
+      </div>
+      <div id="tkList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- TRANG THỐNG KÊ -->
+<div class="page" id="pg-stats">
+  <div class="scroll">
+    <div class="stat-tabs">
+      <button class="stat-tab on" onclick="switchStatTab('day',this)">📆 Ngày</button>
+      <button class="stat-tab" onclick="switchStatTab('week',this)">🗓️ Tuần</button>
+      <button class="stat-tab" onclick="switchStatTab('month',this)">📅 Tháng</button>
+      <button class="stat-tab" onclick="switchStatTab('year',this)">📊 Năm</button>
+    </div>
+    <div id="statsContent"></div>
+  </div>
+</div>
+
+<!-- TRANG CÀI ĐẶT -->
+<div class="page" id="pg-setup">
+  <div class="scroll">
+    <div class="demo-card">
+      <div class="ct">🎓 Dữ liệu Demo – Học sinh lớp 10</div>
+      <p style="font-size:.83rem;color:var(--txt2);margin-bottom:10px;line-height:1.6">
+        Tạo lịch mẫu: Đi học, học thêm, Toán/Văn/Anh/Lý/Hóa, ăn uống, ngủ nghỉ.<br>
+        <strong style="color:var(--red)">⚠️ Xóa toàn bộ dữ liệu hiện tại!</strong>
+      </p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn bb" onclick="loadDemoData()">📥 Load Demo Data</button>
+        <button class="btn br sm" onclick="resetAllData()">🗑️ Xóa tất cả</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="ct">🧠 Bảng độ khó môn học (v11)</div>
+      <div id="diffTable" style="font-size:.82rem"></div>
+    </div>
+    <div class="card">
+      <div class="ct">🛠️ Tùy chọn lập trình viên</div>
+      <div class="toggle-row">
+        <label>Giữ localStorage khi cập nhật code</label>
+        <input type="checkbox" class="tgl" id="devKeepStorage"/>
+      </div>
+      <div class="toggle-row">
+        <label>Hiện debug panel</label>
+        <input type="checkbox" class="tgl" id="devShowDebug" onchange="toggleDebugPanel()"/>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn bb sm" onclick="runTestSuite()">🧪 Chạy kiểm tra tự động</button>
+        <button class="btn bgh sm" onclick="refreshDebugPanel()">🔄 Cập nhật debug</button>
+      </div>
+    </div>
+    <div class="card" id="debugCard" style="display:none">
+      <div class="ct">🔍 Debug Panel</div>
+      <div id="debugPanel">Nhấn "Cập nhật debug"…</div>
+    </div>
+    <div class="card">
+      <div class="ct">🤖 AI Model: phi3:mini (offline)</div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+        <div style="background:var(--pri);color:#fff;border-radius:99px;padding:6px 16px;font-weight:700;font-size:.9rem">✓ phi3:mini</div>
+        <span style="font-size:.82rem;color:var(--txt2)">2.3GB · offline hoàn toàn · không cần API key</span>
+      </div>
+      <div class="tip-b">💡 phi3:mini của Microsoft – chạy tốt trên máy 8GB RAM.</div>
+    </div>
+    <div class="card">
+      <div class="ct">📋 Hướng dẫn cài Ollama</div>
+      <div class="step"><div class="sn">1</div><div>
+        <b>Tải Ollama</b>
+        <div class="code-b">https://ollama.com/download<button class="cpbtn" onclick="cp('https://ollama.com/download')">Copy</button></div>
+      </div></div>
+      <div class="step"><div class="sn">2</div><div>
+        <b>Tải model phi3:mini</b>
+        <div class="code-b">ollama pull phi3:mini<button class="cpbtn" onclick="cp('ollama pull phi3:mini')">Copy</button></div>
+      </div></div>
+      <div class="step"><div class="sn">3</div><div>
+        <b>Chạy Ollama</b>
+        <div class="code-b">OLLAMA_ORIGINS="*" ollama serve<button class="cpbtn" onclick="cp('OLLAMA_ORIGINS=\"*\" ollama serve')">Copy</button></div>
+      </div></div>
+      <div class="step"><div class="sn">4</div><div>
+        <b>Kiểm tra</b>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn bp sm" onclick="checkOllama(true)">🔄 Kiểm tra</button>
+          <button class="btn bg sm" onclick="testChat()">💬 Test chat</button>
+          <span id="setupLog" style="font-size:.79rem;color:var(--txt2)"></span>
+        </div>
+      </div></div>
+      <div class="row" style="padding-top:12px;border-top:1.5px solid var(--brd);margin-top:4px">
+        <div class="fg"><label>Ollama URL</label><input id="oUrl" value="http://localhost:11434"/></div>
+        <button class="btn bgh sm" onclick="saveOUrl()">💾 Lưu</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div><!-- /#main -->
+
+<!-- Modal chỉnh sửa -->
+<div id="editModal" onclick="if(event.target===this)closeEdit()">
+  <div class="m-box">
+    <div class="m-hdr">
+      <h3 id="editTitle">✏️ Chỉnh sửa</h3>
+      <button class="btn bgh sm" onclick="closeEdit()">✕</button>
+    </div>
+    <div class="m-body">
+      <div class="row"><div class="fg"><label>Tên</label><input id="e_name"/></div></div>
+      <div class="row">
+        <div class="fg"><label>Bắt đầu</label><input type="time" id="e_start" oninput="checkEditConflict()"/></div>
+        <div class="fg"><label>Kết thúc</label><input type="time" id="e_end" oninput="checkEditConflict()"/></div>
+      </div>
+      <div class="row">
+        <div class="fg"><label>Ưu tiên</label>
+          <select id="e_pri"><option value="high">🔴 Cao</option><option value="med">🟡 TB</option><option value="low">🟢 Thấp</option></select></div>
+        <div class="fg"><label>Thời lượng (phút)</label><input type="number" id="e_dur" min="10" step="5"/></div>
+      </div>
+      <div id="e_dateRange" class="row">
+        <div class="fg"><label>📅 Từ ngày</label><input type="date" id="e_dfrom"/></div>
+        <div class="fg"><label>🏁 Đến ngày</label><input type="date" id="e_dto"/></div>
+      </div>
+      <div class="row">
+        <div class="fg"><label>Tag / Môn</label><input id="e_tag"/></div>
+      </div>
+      <div class="row"><div class="fg"><label>Ghi chú</label><textarea id="e_note" rows="2"></textarea></div></div>
+      <div class="row">
+        <div class="fg"><label>Override môn học</label>
+          <select id="e_subj">
+            <option value="">— Tự động —</option>
+            <option>Toán</option><option>Vật Lý</option><option>Hóa Học</option>
+            <option>Ngữ Văn</option><option>Tiếng Anh</option><option>Lịch Sử</option>
+            <option>Địa Lý</option><option>Sinh Học</option><option>Tin Học</option>
+            <option>Thể Dục</option><option>GDCD</option><option>Khác</option>
+          </select></div>
+      </div>
+      <div id="editConflictAlert" class="conflict-alert">⚠️ <span id="editConflictMsg"></span></div>
+    </div>
+    <div class="m-ftr">
+      <button class="btn br sm" onclick="deleteEditTarget()">🗑️ Xóa</button>
+      <div style="flex:1"></div>
+      <button class="btn bgh sm" onclick="closeEdit()">Huỷ</button>
+      <button class="btn bp sm" onclick="saveEdit()">💾 Lưu</button>
+    </div>
+  </div>
+</div>
+
+<div id="testOverlay" onclick="if(event.target===this)closeTestOverlay()">
+  <div id="testBox">
+    <div class="t-hdr"><h3>🧪 Kết quả kiểm tra tự động</h3>
+      <button class="btn bgh sm" onclick="closeTestOverlay()">✕</button></div>
+    <div id="testResults"></div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+'use strict';
+const APP_VERSION = '11.0.0';
+
+function checkVersion() {
+  const saved = localStorage.getItem('ssp_version');
+  if (saved === APP_VERSION) return;
+  const keep = localStorage.getItem('ssp_dev_keep') === '1';
+  if (!keep) Object.keys(localStorage).filter(k=>k.startsWith('ssp_')&&k!=='ssp_dev_keep').forEach(k=>localStorage.removeItem(k));
+  localStorage.setItem('ssp_version', APP_VERSION);
+}
+
+const DB = {
+  T:{TASKS:'ssp_tasks',EVENTS:'ssp_events',SCHED:'ssp_sched',CHAT:'ssp_chat',CFG:'ssp_cfg',BLOCKS:'ssp_blocks',UNDO:'ssp_undo'},
+  get(t,def=[]){try{const r=localStorage.getItem(t);return r?JSON.parse(r):def;}catch{return def;}},
+  set(t,v){localStorage.setItem(t,JSON.stringify(v));},
+  cfg(k,v){if(v===undefined)return this.get(this.T.CFG,{})[k];const s=this.get(this.T.CFG,{});s[k]=v;this.set(this.T.CFG,s);}
+};
+
+const COLORS=['#7c3aed','#3b82f6','#10b981','#f59e0b','#ef4444','#f97316','#ec4899','#0ea5e9','#84cc16'];
+const DAY_VI=['CN','T2','T3','T4','T5','T6','T7'];
+const DAY_FULL=['Chủ Nhật','Thứ Hai','Thứ Ba','Thứ Tư','Thứ Năm','Thứ Sáu','Thứ Bảy'];
+const MODEL='phi3:mini';
+
+let ollamaUrl=DB.cfg('oUrl')||'http://localhost:11434';
+let ollamaOk=false, weekOff=0, tlDate=null, selPri='med', selSubj='';
+let lastSchedulerRun=DB.cfg('lastRun')||null;
+let events=DB.get(DB.T.EVENTS), tasks=DB.get(DB.T.TASKS);
+let schedule=DB.get(DB.T.SCHED,{}), blocks=DB.get(DB.T.BLOCKS,[]);
+
+const t2m=s=>{const[h,m]=s.split(':').map(Number);return h*60+m;};
+const m2t=m=>`${String(Math.floor(m/60)%24).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+function dateToStr(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+function todayStr(){return dateToStr(new Date());}
+function dsToDate(ds){return new Date(ds+'T12:00:00');}
+function getMonday(off=0){const d=new Date();d.setHours(12,0,0,0);const dow=d.getDay();d.setDate(d.getDate()+(dow===0?-6:1-dow)+off*7);d.setHours(0,0,0,0);return d;}
+function _offStr(n){const d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()+n);return dateToStr(d);}
+
+let undoSnapshot=DB.get(DB.T.UNDO,null);
+function saveUndo(label='Thao tác'){
+  undoSnapshot={label,ts:Date.now(),tasks:JSON.parse(JSON.stringify(tasks)),events:JSON.parse(JSON.stringify(events)),schedule:JSON.parse(JSON.stringify(schedule)),blocks:JSON.parse(JSON.stringify(blocks))};
+  DB.set(DB.T.UNDO,undoSnapshot);
+  const btn=document.getElementById('btnUndo');btn.style.display='flex';btn.title=`Hoàn tác: ${label} (Ctrl+Z)`;
+}
+function applyUndo(){
+  if(!undoSnapshot){showToast('⚠️ Không có gì để hoàn tác!');return;}
+  if(!confirm(`Hoàn tác: "${undoSnapshot.label}"?`))return;
+  ({tasks,events,schedule,blocks}=undoSnapshot);
+  DB.set(DB.T.TASKS,tasks);DB.set(DB.T.EVENTS,events);DB.set(DB.T.SCHED,schedule);DB.set(DB.T.BLOCKS,blocks);
+  undoSnapshot=null;DB.set(DB.T.UNDO,null);document.getElementById('btnUndo').style.display='none';
+  renderAll();showToast('↩ Đã hoàn tác!');
+}
+document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='z'&&!e.shiftKey){e.preventDefault();applyUndo();}});
+
+/* ═══════════════════════════════════════════════════════════
+   SEC-8: JS-CLASSIFIER – NHẬN DIỆN MÔN HỌC + ĐỘ KHÓ (v11)
+   ▸ Thêm difficulty (1-5), cognitiveLoad (1-10), bestTime
+   ▸ difficulty: Toán/Lý/Hóa=5, Tin=4, Anh=3, Văn/Sử/Địa=2-3,
+                 Sinh/GDCD=2, Thể Dục=1
+   ▸ cognitiveLoad: tải nhận thức tích lũy (dùng cho scheduler)
+   ▸ bestTime: khung giờ tốt nhất cho từng loại môn
+═══════════════════════════════════════════════════════════ */
+const SUBJECT_MAP = [
+  // [regex, tên môn, type, màu, emoji, difficulty(1-5), cognitiveLoad(1-10), bestTime]
+  [/\b(toán|số học|đại số|hình học|giải tích|tính toán|bài toán|lượng giác|ma trận|đạo hàm|tích phân)\b/i,
+    'Toán','hard','#ef4444','🔢', 5, 9, 'morning'],
+  [/\b(vật lý|vật lí|lý|cơ học|điện học|quang học|nhiệt học|dao động|sóng)\b/i,
+    'Vật Lý','hard','#f97316','⚛️', 5, 9, 'morning'],
+  [/\b(hóa học|hoá học|hóa|hoá|phản ứng|nguyên tố|hữu cơ|vô cơ|axit|bazơ)\b/i,
+    'Hóa Học','hard','#8b5cf6','🧪', 5, 8, 'morning'],
+  [/\b(tin học|lập trình|code|coding|thuật toán|máy tính|python|java|c\+\+|html|css)\b/i,
+    'Tin Học','hard','#0ea5e9','💻', 4, 7, 'morning'],
+  [/\b(tiếng anh|anh văn|english|từ vựng|grammar|ngữ pháp anh|listening|speaking|writing|reading)\b/i,
+    'Tiếng Anh','memory','#3b82f6','🇬🇧', 3, 5, 'evening'],
+  [/\b(ngữ văn|văn học|văn|viết văn|đọc hiểu|tập làm văn|cảm thụ|bình luận)\b/i,
+    'Ngữ Văn','creative','#ec4899','✍️', 3, 5, 'afternoon'],
+  [/\b(lịch sử|sử|sử học|thế chiến|phong trào|triều đại|cách mạng)\b/i,
+    'Lịch Sử','memory','#d97706','📜', 2, 4, 'evening'],
+  [/\b(địa lý|địa|địa lí|bản đồ|khí hậu|địa hình|châu lục)\b/i,
+    'Địa Lý','memory','#16a34a','🗺️', 2, 4, 'afternoon'],
+  [/\b(sinh học|sinh|tế bào|di truyền|hệ sinh thái|giải phẫu|vi sinh)\b/i,
+    'Sinh Học','memory','#10b981','🌱', 2, 4, 'evening'],
+  [/\b(gdcd|giáo dục công dân|pháp luật|đạo đức)\b/i,
+    'GDCD','memory','#6b7280','🏛️', 2, 3, 'afternoon'],
+  [/\b(thể dục|thể thao|vận động|chạy bộ|bơi|yoga|gym|thể hình|cầu lông|bóng đá)\b/i,
+    'Thể Dục','physical','#84cc16','🏃', 1, 2, 'morning'],
+  [/\b(âm nhạc|nhạc|đàn|hát|piano|guitar|violin)\b/i,
+    'Âm Nhạc','creative','#f472b6','🎵', 2, 3, 'afternoon'],
+  [/\b(mỹ thuật|họa|vẽ|hội họa|nghệ thuật)\b/i,
+    'Mỹ Thuật','creative','#fb923c','🎨', 2, 3, 'afternoon'],
+];
+
+// Lấy thông tin difficulty theo tên môn
+function getDifficultyInfo(subject) {
+  const found = SUBJECT_MAP.find(([,s])=>s===subject);
+  if (found) return { difficulty: found[5], cognitiveLoad: found[6], bestTime: found[7] };
+  return { difficulty: 2, cognitiveLoad: 4, bestTime: 'auto' };
+}
+
+// Label độ khó
+function diffLabel(d) {
+  return ['','⭐ Rất dễ','⭐⭐ Dễ','⭐⭐⭐ TB','⭐⭐⭐⭐ Khó','⭐⭐⭐⭐⭐ Rất khó'][d]||'—';
+}
+
+function classifyTaskType(title, subjectOverride='') {
+  if (subjectOverride) {
+    const found = SUBJECT_MAP.find(([,s])=>s===subjectOverride);
+    if (found) return {subject:found[1],type:found[2],color:found[3],emoji:found[4],
+      difficulty:found[5],cognitiveLoad:found[6],bestTime:found[7],matched:true};
+  }
+  const t = title.toLowerCase();
+  for (const [re,subject,type,color,emoji,difficulty,cognitiveLoad,bestTime] of SUBJECT_MAP) {
+    if (re.test(t)) return {subject,type,color,emoji,difficulty,cognitiveLoad,bestTime,matched:true};
+  }
+  if (/(ôn tập|ôn luyện|làm bài|bài tập|kiểm tra|ôn thi)/.test(t))
+    return {subject:'Chung',type:'hard',color:'#7c3aed',emoji:'📖',difficulty:3,cognitiveLoad:5,bestTime:'morning',matched:false};
+  return {subject:'Khác',type:'general',color:'#9ca3af',emoji:'✏️',difficulty:2,cognitiveLoad:3,bestTime:'auto',matched:false};
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SEC-9: JS-SCHEDULER – THUẬT TOÁN THÔNG MINH THEO ĐỘ KHÓ (v11)
+
+   QUY TẮC MỚI:
+   1. Môn difficulty≥4 (Toán/Lý/Hóa/Tin) → ưu tiên 6h-10h
+   2. Môn memory (Anh/Sử/Địa/Sinh)       → ưu tiên 20h-22h
+   3. Môn creative (Văn/Mỹ thuật/Âm nhạc) → ưu tiên 14h-17h
+   4. Thể dục                             → 6h-8h hoặc 16h-18h
+   5. Sau 2 môn khó (diff≥4) liên tiếp   → bắt buộc nghỉ 15p
+   6. 2 môn khó (diff≥4) đặt liền nhau   → tự chèn nghỉ 5p giữa
+   7. taskScore() tính difficulty×20 + cognitiveLoad×5
+   8. fatigueScore() tích lũy cognitiveLoad thực tế
+   9. Không xếp >3 slot hard liên tiếp
+═══════════════════════════════════════════════════════════ */
+const SMART = {
+  BUFFER: 10,           // buffer tối thiểu giữa các task (phút)
+  BREAK_S: 5,           // nghỉ ngắn Pomodoro (phút)
+  BREAK_L: 15,          // nghỉ dài bắt buộc (phút)
+  MAX_CONT: 120,        // thời gian học liên tục tối đa (phút)
+  MAX_HARD_STREAK: 2,   // số môn khó tối đa liên tiếp trước khi nghỉ
+  HARD_DIFF_THRESHOLD: 4, // difficulty >= này được coi là "môn khó"
+  NO_STUDY_BEFORE_SLEEP: 30,
+  PRE_FIXED_GUARD: 15,
+  DAY_START: 6*60,
+  DAY_END: 22*60+30,
+
+  // ── Khung giờ theo độ khó (v11) ──────────────────────────
+  // Môn khó (diff≥4): sáng sớm khi não tỉnh táo nhất
+  HARD_WINDOW:     [{from:6*60,  to:10*60}],   // 6h–10h
+  // Môn memory: tối (spaced repetition trước khi ngủ)
+  MEMORY_WINDOW:   [{from:20*60, to:22*60}],   // 20h–22h
+  // Môn sáng tạo: chiều
+  CREATIVE_WINDOW: [{from:14*60, to:17*60}],   // 14h–17h
+  // Thể dục: sáng sớm hoặc chiều tối
+  PHYSICAL_WINDOW: [{from:6*60,  to:8*60}, {from:16*60, to:18*60}],
+  // Fallback
+  GENERAL_WINDOW:  [{from:6*60,  to:22*60}],
+
+  // Cộng điểm theo difficulty trong taskScore
+  DIFF_SCORE_MULT: 20,   // difficulty × 20 điểm
+  COG_SCORE_MULT:  5,    // cognitiveLoad × 5 điểm
+};
+
+// Tính điểm ưu tiên cho task (càng cao → xếp trước)
+function taskScore(t, ds) {
+  let s = {high:300, med:200, low:100}[t.pri] || 100;
+
+  // Deadline urgency
+  const deadline = t.dateTo || t.dl || '';
+  if (deadline) {
+    const diff = (new Date(deadline) - new Date(ds)) / 86400000;
+    if (diff < 0)  s += 300;
+    else if (diff < 1) s += 200;
+    else if (diff < 3) s += 120;
+    else if (diff < 7) s += 60;
+  }
+
+  // ── MỚI v11: Difficulty score ──────────────────────────────
+  const cls = classifyTaskType(t.name, t.subjectOverride||'');
+  s += cls.difficulty * SMART.DIFF_SCORE_MULT;  // Toán/Lý/Hóa=+100, Tin=+80
+  s += cls.cognitiveLoad * SMART.COG_SCORE_MULT; // tải nhận thức cao → ưu tiên lúc não tỉnh
+
+  return s;
+}
+
+// Tính tải nhận thức tích lũy trong 1 ngày
+function calcDayCogLoad(slots) {
+  return slots.filter(s=>s.kind==='task').reduce((sum,s)=>{
+    const cls = classifyTaskType(s.name, s.subjectOverride||'');
+    return sum + cls.cognitiveLoad * ((s.end-s.start)/60);
+  }, 0);
+}
+
+// fatigueScore: tính dựa trên cognitiveLoad tích lũy (v11)
+function fatigueScore(slots) {
+  let s = 0;
+  const ts = slots.filter(s=>s.kind==='task');
+  for (let i = 1; i < ts.length; i++) {
+    const a = classifyTaskType(ts[i-1].name, ts[i-1].subjectOverride||'');
+    const b = classifyTaskType(ts[i].name, ts[i].subjectOverride||'');
+    // 2 môn khó liên tiếp → phạt nặng
+    if (a.difficulty >= SMART.HARD_DIFF_THRESHOLD && b.difficulty >= SMART.HARD_DIFF_THRESHOLD) s += 30;
+    // Cùng cognitiveLoad cao liên tiếp → phạt vừa
+    if (a.cognitiveLoad >= 7 && b.cognitiveLoad >= 7) s += 15;
+    // Cùng type, không phải physical → phạt nhẹ
+    if (a.type === b.type && b.type !== 'physical') s += 5;
+  }
+  return s;
+}
+
+function freeSlots(occ, from, to, minLen=10, fixedStarts=[]) {
+  const guardZones = fixedStarts.map(fs=>({start:Math.max(from,fs-SMART.PRE_FIXED_GUARD), end:fs}));
+  const all = [...occ,...guardZones].sort((a,b)=>a.start-b.start);
+  const free=[]; let cur=from;
+  for (const s of all) {
+    if (s.start > cur+minLen-1) free.push({start:cur, end:Math.min(s.start,to)});
+    cur = Math.max(cur, s.end);
+    if (cur >= to) break;
+  }
+  if (cur < to-minLen+1) free.push({start:cur, end:to});
+  return free.filter(f=>f.end-f.start>=minLen);
+}
+
+function splitTaskSmart(t) {
+  if (t.dur <= 60) return [t];
+  const chunks=[]; let rem=t.dur, i=1;
+  while (rem>0) {
+    const sz = Math.min(50, rem);
+    chunks.push({...t, id:`${t.id}_p${i}`, name:`${t.name} (${i})`, dur:sz});
+    rem -= sz; i++;
+  }
+  return chunks;
+}
+
+// ── Lấy khung giờ ưu tiên theo difficulty + pref (v11) ────
+function getPrefWindow(chunk) {
+  // Nếu user chỉ định rõ → dùng theo user
+  if (chunk.pref && chunk.pref !== 'auto') {
+    const map = {
+      morning:   [{from:6*60,  to:12*60}],
+      afternoon: [{from:12*60, to:18*60}],
+      evening:   [{from:18*60, to:22*60}]
+    };
+    return map[chunk.pref] || SMART.GENERAL_WINDOW;
+  }
+  // Không có pref → dùng theo difficulty + type (v11)
+  const cls = classifyTaskType(chunk.name, chunk.subjectOverride||'');
+  if (cls.difficulty >= SMART.HARD_DIFF_THRESHOLD) return SMART.HARD_WINDOW;
+  if (cls.type === 'memory')   return SMART.MEMORY_WINDOW;
+  if (cls.type === 'creative') return SMART.CREATIVE_WINDOW;
+  if (cls.type === 'physical') return SMART.PHYSICAL_WINDOW;
+  return SMART.GENERAL_WINDOW;
+}
+
+function findBestSlot(freeList, chunk, prefWin) {
+  // Thử trong khung giờ ưu tiên trước
+  for (const win of prefWin) {
+    for (const f of freeList) {
+      const ws = Math.max(f.start, win.from), we = Math.min(f.end, win.to);
+      if (we - ws >= chunk.dur) return {start: ws};
+    }
+  }
+  // Fallback: bất kỳ slot nào còn trống
+  const fit = freeList.find(f=>f.end-f.start>=chunk.dur);
+  return fit ? {start: fit.start} : null;
+}
+
+function runScheduler() {
+  const mode = document.getElementById('schedMode')?.value || 'greedy';
+  const newSched = {};
+  const mon = getMonday(0);
+  const sleepEv = events.find(e=>/ngủ/i.test(e.name)&&e.type==='fixed');
+  const sleepStart = sleepEv ? t2m(sleepEv.start) : 22*60;
+  const studyEnd = sleepStart - SMART.NO_STUDY_BEFORE_SLEEP;
+  saveUndo('Xếp lịch');
+
+  for (let d = 0; d < 14; d++) {
+    const date = new Date(mon); date.setDate(mon.getDate()+d);
+    const ds = dateToStr(date), dow = date.getDay();
+
+    if (blocks.includes(ds)) {
+      newSched[ds] = [{name:'🚫 Ngày nghỉ',start:0,end:1439,kind:'block',color:'#9ca3af',done:false}];
+      continue;
+    }
+
+    const placed = [];
+    const fixedForDay = events.filter(e=>e.type==='fixed'&&e.repeat.includes(dow));
+    const fixedStarts = fixedForDay.map(e=>t2m(e.start));
+
+    // Đặt sự kiện cố định
+    fixedForDay.forEach(e=>{
+      placed.push({name:e.name,start:t2m(e.start),end:t2m(e.end),kind:'ev-fix',
+        pri:e.pri,color:e.color,done:false,locked:e.locked!==false,
+        tip:`${e.start}–${e.end} | Cố định`});
+    });
+    placed.sort((a,b)=>a.start-b.start);
+
+    // Sự kiện linh hoạt
+    events.filter(e=>e.type==='flex'&&e.repeat.includes(dow))
+      .sort((a,b)=>({high:3,med:2,low:1}[b.pri]||1)-({high:3,med:2,low:1}[a.pri]||1))
+      .forEach(e=>{
+        const fr = freeSlots(placed,t2m(e.eStart),t2m(e.lEnd),e.dur,fixedStarts);
+        const ft = fr.find(s=>s.end-s.start>=e.dur);
+        if (ft) {
+          placed.push({name:e.name,start:ft.start,end:ft.start+e.dur,kind:'ev-flex',
+            pri:e.pri,color:e.color,done:false,tip:`Trong ${e.eStart}–${e.lEnd}`});
+          placed.sort((a,b)=>a.start-b.start);
+        }
+      });
+
+    // Lọc task phù hợp khoảng ngày
+    const activeTasks = tasks.filter(t=>{
+      if (t.done) return false;
+      if (t.dateFrom && ds < t.dateFrom) return false;
+      if (t.dateTo   && ds > t.dateTo)   return false;
+      return true;
+    });
+
+    // Phân loại task theo độ khó
+    const allChunks = activeTasks
+      .flatMap(t=>splitTaskSmart(t))
+      .map(t=>({...t, score:taskScore(t,ds), _cls:classifyTaskType(t.name,t.subjectOverride||'')}))
+      .sort((a,b)=>b.score-a.score);
+
+    // ── Nhóm theo độ khó (v11) ────────────────────────────────
+    // Nhóm 1: Thể dục (physical) – sáng sớm
+    const physQ    = allChunks.filter(c=>c._cls.type==='physical');
+    // Nhóm 2: Môn khó cao (diff≥4) – sau thể dục, sáng sớm
+    const hardQ    = allChunks.filter(c=>c._cls.difficulty>=SMART.HARD_DIFF_THRESHOLD);
+    // Nhóm 3: Môn sáng tạo – chiều
+    const creativeQ= allChunks.filter(c=>c._cls.type==='creative'&&c._cls.difficulty<SMART.HARD_DIFF_THRESHOLD);
+    // Nhóm 4: Môn thuộc lòng – tối
+    const memoryQ  = allChunks.filter(c=>c._cls.type==='memory');
+    // Nhóm 5: Còn lại
+    const restQ    = allChunks.filter(c=>
+      c._cls.type!=='physical' &&
+      c._cls.difficulty < SMART.HARD_DIFF_THRESHOLD &&
+      c._cls.type !== 'creative' &&
+      c._cls.type !== 'memory'
+    );
+
+    // Thứ tự xếp: thể dục → khó → còn lại → sáng tạo → thuộc lòng
+    const ordered = [...physQ, ...hardQ, ...restQ, ...creativeQ, ...memoryQ];
+
+    const used = new Set();
+    let contMin = 0, lastEnd = 0;
+    let hardStreak = 0; // đếm số môn khó liên tiếp
+
+    for (const chunk of ordered) {
+      if (used.has(chunk.id)) continue;
+
+      const cls = chunk._cls;
+      const isHard = cls.difficulty >= SMART.HARD_DIFF_THRESHOLD;
+
+      // ── Kiểm tra hard streak (v11) ────────────────────────
+      if (hardStreak >= SMART.MAX_HARD_STREAK) {
+        // Bắt buộc nghỉ 15p sau 2 môn khó liên tiếp
+        const brFree = freeSlots(placed, SMART.DAY_START, studyEnd, SMART.BREAK_L, fixedStarts);
+        if (brFree.length) {
+          placed.push({
+            name: '🧘 Nghỉ giữa môn khó',
+            start: brFree[0].start, end: brFree[0].start + SMART.BREAK_L,
+            kind: 'buffer', color: '#6b7280', done: false,
+            tip: `Nghỉ bắt buộc ${SMART.BREAK_L}p sau ${SMART.MAX_HARD_STREAK} môn khó`
+          });
+          placed.sort((a,b)=>a.start-b.start);
+          contMin = 0;
+        }
+        hardStreak = 0;
+      }
+
+      // ── Kiểm tra thời gian học liên tục (v11) ─────────────
+      if (contMin >= SMART.MAX_CONT) {
+        const brFree = freeSlots(placed, SMART.DAY_START, studyEnd, SMART.BREAK_L, fixedStarts);
+        if (brFree.length) {
+          placed.push({
+            name: '😴 Nghỉ dài',
+            start: brFree[0].start, end: brFree[0].start + SMART.BREAK_L,
+            kind: 'buffer', color: '#9ca3af', done: false,
+            tip: `Nghỉ bắt buộc sau ${SMART.MAX_CONT}p học liên tục`
+          });
+          placed.sort((a,b)=>a.start-b.start);
+          contMin = 0;
+        }
+      }
+
+      const prefWin = getPrefWindow(chunk);
+      const freeUpd = freeSlots(placed,
+        Math.max(SMART.DAY_START, lastEnd + SMART.BUFFER),
+        studyEnd, chunk.dur, fixedStarts);
+      const best = findBestSlot(freeUpd, chunk, prefWin);
+      if (!best) continue;
+
+      const {start} = best, end = start + chunk.dur;
+
+      // ── Chèn nghỉ 5p nếu slot trước cũng là môn khó (v11) ─
+      const prevTask = [...placed].filter(s=>s.kind==='task').pop();
+      if (prevTask && isHard) {
+        const prevCls = classifyTaskType(prevTask.name, prevTask.subjectOverride||'');
+        if (prevCls.difficulty >= SMART.HARD_DIFF_THRESHOLD && start - prevTask.end < SMART.BREAK_S) {
+          // Chèn 5p nghỉ ngay sau slot trước
+          const miniBreakStart = prevTask.end;
+          const miniBreakEnd = miniBreakStart + SMART.BREAK_S;
+          if (miniBreakEnd <= studyEnd) {
+            placed.push({
+              name: '☕ Nghỉ 5p', start: miniBreakStart, end: miniBreakEnd,
+              kind: 'buffer', color: '#a78bfa', done: false,
+              tip: `Nghỉ giữa 2 môn khó`
+            });
+            placed.sort((a,b)=>a.start-b.start);
+          }
+        }
+      }
+
+      placed.push({
+        name: chunk.name, start, end,
+        kind: 'task', pri: chunk.pri,
+        color: cls.color,
+        taskId: chunk.id, done: chunk.done||false,
+        locked: false,
+        tag: cls.subject,
+        difficulty: cls.difficulty,
+        cognitiveLoad: cls.cognitiveLoad,
+        subjectOverride: chunk.subjectOverride||'',
+        dateFrom: chunk.dateFrom||'', dateTo: chunk.dateTo||'',
+        note: chunk.note||'',
+        tip: `${m2t(start)}–${m2t(end)} | ${chunk.dur}p | ${cls.emoji} ${cls.subject} | ${'⭐'.repeat(cls.difficulty)}`
+      });
+      placed.sort((a,b)=>a.start-b.start);
+      contMin += chunk.dur; lastEnd = end;
+      used.add(chunk.id);
+
+      // Cập nhật streak
+      hardStreak = isHard ? hardStreak + 1 : 0;
+
+      // Pomodoro break sau môn khó dài ≥25p
+      if (isHard && chunk.dur >= 25) {
+        const bf = freeSlots(placed, SMART.DAY_START, studyEnd, SMART.BREAK_S, fixedStarts);
+        if (bf.length && bf[0].end-bf[0].start >= SMART.BREAK_S) {
+          placed.push({
+            name: '☕ Pomodoro', start: bf[0].start, end: bf[0].start+SMART.BREAK_S,
+            kind: 'buffer', color: '#6b7280', done: false,
+            tip: `Nghỉ Pomodoro ${SMART.BREAK_S}p sau ${cls.emoji} ${cls.subject}`
+          });
+          placed.sort((a,b)=>a.start-b.start);
+        }
+      }
+    }
+
+    // ── Mode optimized: hoán đổi giảm fatigue (v11) ──────────
+    if (mode === 'optimized') {
+      let improved = true, iter = 0;
+      while (improved && iter < 12) {
+        improved = false; iter++;
+        const ts = placed.filter(s=>s.kind==='task');
+        for (let i = 0; i < ts.length-1; i++) {
+          const iA = placed.indexOf(ts[i]), iB = placed.indexOf(ts[i+1]);
+          if (iA<0||iB<0) continue;
+          const before = fatigueScore(placed);
+          // Thử hoán đổi
+          const tmpS = placed[iA].start;
+          const durA = placed[iA].end-placed[iA].start, durB = placed[iB].end-placed[iB].start;
+          [placed[iA].start, placed[iA].end] = [placed[iB].start, placed[iB].start+durA];
+          [placed[iB].start, placed[iB].end] = [tmpS, tmpS+durB];
+          if (fatigueScore(placed) >= before) {
+            // Hoàn nguyên
+            [placed[iA].start, placed[iA].end] = [tmpS, tmpS+durA];
+            [placed[iB].start, placed[iB].end] = [placed[iA].end, placed[iA].end+durB];
+          } else { improved = true; }
+        }
+      }
+      placed.sort((a,b)=>a.start-b.start);
+    }
+
+    newSched[ds] = placed;
+  }
+
+  schedule = newSched;
+  DB.set(DB.T.SCHED, schedule);
+  lastSchedulerRun = new Date().toLocaleString('vi-VN');
+  DB.cfg('lastRun', lastSchedulerRun);
+  renderCalendar();
+  if (tlDate) renderTimeline(tlDate, dsToDate(tlDate));
+  showToast(`⚡ Đã xếp lịch thông minh theo độ khó (${mode==='optimized'?'tối ưu':'nhanh'})!`);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SEC-10: JS-CALENDAR – RENDER LƯỚI TUẦN
+═══════════════════════════════════════════════════════════ */
+function chgWeek(d,mode){weekOff=mode==='today'?0:weekOff+d;renderCalendar();}
+
+function renderCalendar() {
+  const mon=getMonday(weekOff), today=todayStr();
+  const end=new Date(mon);end.setDate(mon.getDate()+6);
+  document.getElementById('wkLbl').textContent=`${mon.getDate()}/${mon.getMonth()+1} – ${end.getDate()}/${end.getMonth()+1}/${mon.getFullYear()}`;
+  const grid=document.getElementById('weekGrid');grid.innerHTML='';
+  for (let d=0;d<7;d++) {
+    const date=new Date(mon);date.setDate(mon.getDate()+d);
+    const ds=dateToStr(date);
+    const evs=schedule[ds]||[];
+    const main=evs.filter(e=>e.kind!=='buffer');
+    const tasksDone=main.filter(e=>e.kind==='task'&&e.done).length;
+    const tasksTot=main.filter(e=>e.kind==='task').length;
+    const col=document.createElement('div');
+    col.className='dc'+(ds===today?' today':'')+(ds===tlDate?' selected':'')+(blocks.includes(ds)?' blocked':'');
+    col.tabIndex=0;
+    col.onclick=()=>selectDay(ds,date);
+    col.onkeydown=e=>{if(e.key==='Enter'||e.key===' ')selectDay(ds,date);};
+    col.innerHTML=`<div class="dh">${DAY_VI[date.getDay()]}</div><div class="dd">${date.getDate()}</div>`;
+    if (tasksTot>0) {
+      const pb=document.createElement('div');
+      pb.style.cssText='height:3px;border-radius:99px;background:var(--brd);margin-bottom:4px;overflow:hidden;flex-shrink:0';
+      pb.innerHTML=`<div style="height:100%;border-radius:99px;background:var(--grn);width:${Math.round(tasksDone/tasksTot*100)}%"></div>`;
+      col.appendChild(pb);
+    }
+    if (main.length===0&&!blocks.includes(ds)) {
+      const ph=document.createElement('div');
+      ph.style.cssText='font-size:.66rem;color:var(--txt2);text-align:center;padding:6px 0;opacity:.5;margin-top:auto';
+      ph.textContent='( Trống )';col.appendChild(ph);
+    } else if (blocks.includes(ds)) {
+      const ph=document.createElement('div');
+      ph.style.cssText='font-size:.66rem;color:var(--txt2);text-align:center;padding:6px 0;opacity:.6;margin-top:auto';
+      ph.textContent='🚫 Ngày nghỉ';col.appendChild(ph);
+    } else {
+      main.slice(0,5).forEach(s=>{
+        const cls=s.kind==='task'?classifyTaskType(s.name,s.subjectOverride||''):{};
+        const bl=document.createElement('div');
+        bl.className='ce'+(s.done?' done':'');
+        bl.style.cssText=`background:${s.color}22;color:${s.color};border-left-color:${s.color}`;
+        // Hiển thị difficulty dot cho task – MỚI v11
+        const diffDot = s.kind==='task' && cls.difficulty ?
+          `<span class="ce-diff" style="background:${getDiffColor(cls.difficulty)}" title="Độ khó: ${cls.difficulty}/5"></span>` : '';
+        bl.innerHTML=`<span class="ce-time">${m2t(s.start)}</span><span class="ce-name">${diffDot}${cls.emoji?cls.emoji+' ':''}${s.name}</span>`;
+        col.appendChild(bl);
+      });
+      if (main.length>5) {
+        const more=document.createElement('div');
+        more.style.cssText='font-size:.62rem;color:var(--txt2);text-align:center;margin-top:2px;padding:2px 0';
+        more.textContent=`+${main.length-5} nữa…`;col.appendChild(more);
+      }
+    }
+    grid.appendChild(col);
+  }
+}
+
+// Màu theo difficulty – MỚI v11
+function getDiffColor(d) {
+  return ['','#86efac','#fde68a','#fbbf24','#fb923c','#f87171'][d]||'#e5e7eb';
+}
+
+function selectDay(ds,dateObj){
+  tlDate=ds;renderCalendar();
+  document.getElementById('tl-placeholder').style.display='none';
+  document.getElementById('tl-body').style.display='block';
+  renderTimeline(ds,dateObj);
+}
+
+function detectConflicts(ds) {
+  const evs=(schedule[ds]||[]).filter(e=>e.kind!=='buffer');
+  const cf=[];
+  for (let i=0;i<evs.length;i++) for (let j=i+1;j<evs.length;j++) {
+    const a=evs[i],b=evs[j];
+    if (a.start<b.end&&a.end>b.start) cf.push({a:a.name,b:b.name,time:`${m2t(Math.max(a.start,b.start))}–${m2t(Math.min(a.end,b.end))}`});
+  }
+  return cf;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SEC-11: JS-TIMELINE – RENDER CHI TIẾT NGÀY + NOW-LINE
+   + Cognitive Load Banner (v11)
+═══════════════════════════════════════════════════════════ */
+let dragIdx=null,dragDs=null,nowLineTimer=null;
+const PX=1.5,TLS=5,TLE=24;
+
+function updateNowLine(){
+  const line=document.getElementById('tl-now-line'),lbl=document.getElementById('nowLbl');
+  if(!tlDate||tlDate!==todayStr()){line.style.display='none';return;}
+  const now=new Date(),nm=now.getHours()*60+now.getMinutes();
+  if(nm<TLS*60||nm>=TLE*60){line.style.display='none';return;}
+  line.style.top=(nm-TLS*60)*PX+'px';line.style.display='block';
+  lbl.textContent=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+}
+function startNowLineTimer(){if(nowLineTimer)clearInterval(nowLineTimer);updateNowLine();nowLineTimer=setInterval(updateNowLine,30000);}
+
+function renderTimeline(ds, dateObj) {
+  const dow = dateObj.getDay();
+  document.getElementById('tlTitle').textContent=
+    `${DAY_FULL[dow]}, ${dateObj.getDate()}/${dateObj.getMonth()+1}/${dateObj.getFullYear()}`;
+
+  // ── Cognitive Load Banner (v11) ────────────────────────────
+  const daySlots = schedule[ds]||[];
+  const cogLoad = calcDayCogLoad(daySlots);
+  const banner = document.getElementById('cogloadBanner');
+  const bannerMsg = document.getElementById('cogloadMsg');
+  if (cogLoad > 0) {
+    let cls='cogload-low', msg='';
+    if (cogLoad >= 20) { cls='cogload-high'; msg=`🔥 Tải nhận thức CAO (${cogLoad.toFixed(1)}h·đơn vị) – Nên giảm bớt môn khó hoặc thêm nghỉ!`; }
+    else if (cogLoad >= 10) { cls='cogload-med'; msg=`⚡ Tải nhận thức TRUNG BÌNH (${cogLoad.toFixed(1)}) – Lịch học tốt!`; }
+    else { cls='cogload-low'; msg=`✅ Tải nhận thức NHẸ (${cogLoad.toFixed(1)}) – Có thể thêm task!`; }
+    banner.className=`cogload-banner show ${cls}`;
+    bannerMsg.textContent=msg;
+  } else {
+    banner.className='cogload-banner';
+  }
+
+  const inner=document.getElementById('tl-inner');
+  inner.style.height=((TLE-TLS)*60*PX)+'px';
+  [...inner.children].forEach(c=>{if(c.id!=='tl-now-line')c.remove();});
+
+  for (let h=TLS;h<=TLE;h++) {
+    const top=(h-TLS)*60*PX;
+    const lbl=document.createElement('div');
+    lbl.className='tl-hour';lbl.style.top=(top-8)+'px';lbl.textContent=h<24?h+':00':'';
+    inner.appendChild(lbl);
+    const ln=document.createElement('div');ln.className='tl-line';ln.style.top=top+'px';inner.appendChild(ln);
+    if (h<TLE) {
+      const ln2=document.createElement('div');ln2.className='tl-line-half';ln2.style.top=(top+30*PX)+'px';inner.appendChild(ln2);
+      [0,15,30,45].forEach(min=>{
+        const dz=document.createElement('div');dz.className='drop-zone';
+        dz.style.top=((h*60+min-TLS*60)*PX)+'px';dz.style.height=(15*PX)+'px';dz.dataset.m=h*60+min;
+        dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag-over')});
+        dz.addEventListener('dragleave',()=>dz.classList.remove('drag-over'));
+        dz.addEventListener('drop',e=>{e.preventDefault();onDrop(ds,+dz.dataset.m,dz)});
+        inner.appendChild(dz);
+      });
+    }
+  }
+
+  const conflicts=detectConflicts(ds);
+  const conflictNames=new Set(conflicts.flatMap(c=>[c.a,c.b]));
+  const cfBanner=document.getElementById('conflictBanner'),msgEl=document.getElementById('conflictMsg');
+  if (conflicts.length) { msgEl.textContent=conflicts.map(c=>`"${c.a}" ↔ "${c.b}" ${c.time}`).join(' | '); cfBanner.classList.add('show'); }
+  else cfBanner.classList.remove('show');
+
+  daySlots.forEach((s,i)=>{
+    if (s.start<TLS*60||s.end>TLE*60) return;
+    const top=(s.start-TLS*60)*PX,ht=Math.max((s.end-s.start)*PX-2,22);
+    const el=document.createElement('div');
+    const cls=s.kind==='task'?classifyTaskType(s.name,s.subjectOverride||''):{difficulty:0};
+    const isHardSlot=s.kind==='task'&&cls.difficulty>=SMART.HARD_DIFF_THRESHOLD;
+    el.className='tl-slot'+(s.done?' done':'')+(s.kind==='buffer'?' buf':'')
+      +(conflictNames.has(s.name)?' conflict':'')+(s.locked?' locked':'')+(isHardSlot?' hard-high':'');
+    el.style.cssText=`top:${top}px;height:${ht}px;background:${s.color};color:#fff;border-color:${s.color}dd;z-index:5`;
+    const {emoji=''}=s.kind==='task'?cls:{};
+    // Hiển thị difficulty stars trong slot – MỚI v11
+    const diffStars=s.kind==='task'&&cls.difficulty?`<div class="ts-diff">${'★'.repeat(cls.difficulty)}${'☆'.repeat(5-cls.difficulty)}</div>`:'';
+    el.innerHTML=`<div class="ts-time">${m2t(s.start)}–${m2t(s.end)}</div>
+      <div class="ts-name">${emoji?emoji+' ':''}${s.name}</div>
+      ${s.tag?`<div class="ts-sub">${s.tag}</div>`:''}
+      ${diffStars}
+      ${s.locked?'<span class="ts-lock">🔒</span>':''}`;
+    if (s.kind==='task') {
+      const cb=document.createElement('input');cb.type='checkbox';cb.checked=s.done;cb.className='ts-cb';
+      cb.onchange=e=>{e.stopPropagation();toggleDone(ds,i)};el.appendChild(cb);
+      el.onclick=e=>{if(e.target.type!=='checkbox')openEditSlot(ds,i)};
+      if (!s.locked) {
+        el.draggable=true;
+        el.addEventListener('dragstart',e=>{e.dataTransfer.effectAllowed='move';dragIdx=i;dragDs=ds;setTimeout(()=>el.classList.add('dragging'),0)});
+        el.addEventListener('dragend',()=>el.classList.remove('dragging'));
+      }
+    } else if (s.kind!=='buffer') { el.onclick=()=>openEditSlot(ds,i); }
+    inner.appendChild(el);
+  });
+  startNowLineTimer();
+}
+
+function onDrop(ds,newStart,dz){
+  dz.classList.remove('drag-over');
+  if(dragIdx===null||dragDs!==ds)return;
+  const s=schedule[ds][dragIdx];if(!s||s.locked){showToast('🔒 Sự kiện đã khóa!');return;}
+  saveUndo(`Dời "${s.name}"`);
+  const dur=s.end-s.start;s.start=newStart;s.end=newStart+dur;
+  if(s.end>1440){s.end=1440;s.start=1440-dur;}
+  schedule[ds].sort((a,b)=>a.start-b.start);DB.set(DB.T.SCHED,schedule);
+  renderTimeline(ds,dsToDate(ds));renderCalendar();
+  const cs=detectConflicts(ds);
+  showToast(cs.length?`⚠️ Có xung đột: ${cs[0].a} ↔ ${cs[0].b}`:`✅ Dời "${s.name}" → ${m2t(s.start)}`);
+  dragIdx=null;dragDs=null;
+}
+
+function toggleDone(ds,i){
+  if(!schedule[ds]?.[i])return;
+  schedule[ds][i].done=!schedule[ds][i].done;
+  const tid=schedule[ds][i].taskId;
+  if(tid){const rid=parseInt(String(tid).split('_')[0]);const t=tasks.find(t=>t.id===rid);if(t){t.done=schedule[ds][i].done;DB.set(DB.T.TASKS,tasks);}}
+  DB.set(DB.T.SCHED,schedule);renderTimeline(ds,dsToDate(ds));renderCalendar();
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SEC-12: JS-CRUD
+═══════════════════════════════════════════════════════════ */
+const SUBJECTS_LIST=['Toán','Vật Lý','Hóa Học','Ngữ Văn','Tiếng Anh','Lịch Sử','Địa Lý','Sinh Học','Tin Học','Thể Dục','GDCD','Khác'];
+function buildSubjectBtns(){document.getElementById('subjBtns').innerHTML=SUBJECTS_LIST.map(s=>`<div class="subj-btn" data-s="${s}" onclick="selectSubject('${s}')">${s}</div>`).join('');}
+function selectSubject(s){selSubj=s;document.querySelectorAll('.subj-btn').forEach(b=>b.classList.toggle('on',b.dataset.s===s));}
+function autoDetectSubject(title){const{subject,matched}=classifyTaskType(title);const lbl=document.getElementById('subjectAutoLabel');if(matched&&subject!=='Khác'){lbl.textContent=`(nhận diện: ${subject})`;selectSubject(subject);}else lbl.textContent='';}
+function selectPri(p){selPri=p;document.querySelectorAll('.pri-btn').forEach(b=>{b.className='pri-btn'+(b.dataset.pri===p?` on-${p}`:'');});}
+
+function addTask(){
+  const name=document.getElementById('tk_n').value.trim();if(!name){alert('Nhập tên công việc!');return;}
+  const{subject:autoSubj,color}=classifyTaskType(name);const subject=selSubj||autoSubj;
+  const t={id:Date.now(),name,dur:+document.getElementById('tk_d').value||60,pri:selPri,
+    dateFrom:document.getElementById('tk_dfrom').value,dateTo:document.getElementById('tk_dto').value,
+    tag:`#${subject.toLowerCase().replace(/ /g,'_')}`,pref:document.getElementById('tk_pref').value,
+    note:document.getElementById('tk_note').value.trim(),subject,color,subjectOverride:'',done:false};
+  saveUndo('Thêm task');tasks.push(t);DB.set(DB.T.TASKS,tasks);renderTasks();
+  document.getElementById('tk_n').value='';document.getElementById('tk_note').value='';
+  selSubj='';selectSubject('');selectPri('med');document.getElementById('subjectAutoLabel').textContent='';
+  document.querySelectorAll('.subj-btn').forEach(b=>b.classList.remove('on'));
+  showToast('✅ Đã thêm công việc!');
+}
+
+function addEvent(){
+  const name=document.getElementById('ev_n').value.trim();if(!name){alert('Nhập tên!');return;}
+  const days=[...document.querySelectorAll('.dchip.on')].map(d=>+d.dataset.day);
+  const color=document.querySelector('.copt.on')?.dataset.color||COLORS[0];
+  const type=document.getElementById('ev_t').value,locked=document.getElementById('ev_lock').checked;
+  let ev={id:Date.now(),name,type,repeat:days,pri:document.getElementById('ev_p').value,color,locked};
+  if(type==='fixed'){ev.start=document.getElementById('ev_s').value;ev.end=document.getElementById('ev_e').value;}
+  else{ev.eStart=document.getElementById('ev_es').value;ev.lEnd=document.getElementById('ev_le').value;ev.dur=+document.getElementById('ev_fd').value;}
+  saveUndo('Thêm sự kiện');events.push(ev);DB.set(DB.T.EVENTS,events);renderEvents();
+  document.getElementById('ev_n').value='';showToast('✅ Đã thêm sự kiện!');
+}
+
+function toggleFlex(){const f=document.getElementById('ev_t').value==='flex';document.getElementById('ui_fix').style.display=f?'none':'block';document.getElementById('ui_flex').style.display=f?'block':'none';}
+function delEvent(id){if(!confirm('Xóa?'))return;saveUndo('Xóa sự kiện');events=events.filter(e=>e.id!==id);DB.set(DB.T.EVENTS,events);renderEvents();}
+
+function renderEvents(){
+  const el=document.getElementById('evList'),cnt=document.getElementById('evCount');if(cnt)cnt.textContent=events.length;
+  if(!events.length){el.innerHTML='<p style="color:var(--txt2);text-align:center;padding:18px">Chưa có sự kiện!</p>';return;}
+  el.innerHTML=events.map(e=>`<div class="li"><div class="dot" style="background:${e.color}"></div><div class="n">${e.locked?'🔒 ':''}${e.name}</div><span style="font-size:.72rem;color:var(--txt2)">${e.type==='fixed'?e.start+'–'+e.end:e.eStart+'→'+e.lEnd}</span><button class="btn br sm" onclick="delEvent(${e.id})">✕</button></div>`).join('');
+}
+
+function toggleTask(id){const t=tasks.find(t=>t.id===id);if(t){t.done=!t.done;DB.set(DB.T.TASKS,tasks);renderTasks();}}
+function delTask(id){if(!confirm('Xóa?'))return;saveUndo('Xóa task');tasks=tasks.filter(t=>t.id!==id);DB.set(DB.T.TASKS,tasks);renderTasks();}
+function clearDone(){saveUndo('Xóa đã xong');tasks=tasks.filter(t=>!t.done);DB.set(DB.T.TASKS,tasks);renderTasks();showToast('🗑️ Xóa xong!');}
+
+function renderTasks(){
+  const el=document.getElementById('tkList'),cnt=document.getElementById('tkCount');if(cnt)cnt.textContent=tasks.length;
+  if(!tasks.length){el.innerHTML='<p style="color:var(--txt2);text-align:center;padding:18px">Chưa có công việc!</p>';return;}
+  const pc={high:'bh',med:'bm',low:'bl'},pl={high:'🔴 Cao',med:'🟡 TB',low:'🟢 Thấp'};
+  el.innerHTML=tasks.map(t=>{
+    const cls=classifyTaskType(t.name,t.subjectOverride||'');
+    const dateRange=(t.dateFrom||t.dateTo)?`${t.dateFrom||''} → ${t.dateTo||'∞'}`:'';
+    // Hiện difficulty badge – MỚI v11
+    const diffBadge=`<span class="diff-badge diff-${cls.difficulty}" title="${diffLabel(cls.difficulty)}">★${cls.difficulty}</span>`;
+    return `<div class="li" style="${t.done?'opacity:.45':''}">
+      <input type="checkbox" ${t.done?'checked':''} onchange="toggleTask(${t.id})" style="width:14px;height:14px;accent-color:var(--pri);flex-shrink:0"/>
+      <div class="n" style="${t.done?'text-decoration:line-through':''}">
+        <span style="font-size:.78rem">${cls.emoji} ${t.name}</span>
+        <br><span style="font-size:.66rem;color:var(--txt2)">${cls.subject||''}${dateRange?' · 📅'+dateRange:''}</span>
+      </div>
+      ${diffBadge}
+      <span class="badge ${pc[t.pri]}">${pl[t.pri]}</span>
+      <span style="font-size:.71rem;color:var(--txt2)">⏱${t.dur}p</span>
+      <button class="btn bgh sm" onclick="openEditTask(${t.id})">✏️</button>
+      <button class="btn br sm" onclick="delTask(${t.id})">✕</button>
+    </div>`;
+  }).join('');
+}
+
+let editCtx=null;
+function checkEditConflict(){if(!editCtx||editCtx.mode==='task')return;const{ds,idx}=editCtx;const ns=t2m(document.getElementById('e_start').value),ne=t2m(document.getElementById('e_end').value);if(ne<=ns)return;const others=(schedule[ds]||[]).filter((_,i)=>i!==idx&&schedule[ds][i].kind!=='buffer');const cf=others.filter(s=>ns<s.end&&ne>s.start).map(s=>s.name);const al=document.getElementById('editConflictAlert');if(cf.length){document.getElementById('editConflictMsg').textContent=`Trùng: ${cf.join(', ')}`;al.classList.add('show');}else al.classList.remove('show');}
+function openEditSlot(ds,idx){const s=schedule[ds]?.[idx];if(!s)return;editCtx={mode:'slot',ds,idx};_fillModal(s.kind==='task'?'✏️ Chỉnh sửa task':'✏️ Chỉnh sửa sự kiện',s.name,m2t(s.start),m2t(s.end),s.pri||'med',s.end-s.start,s.tag||'',s.dateFrom||'',s.dateTo||'',s.note||'',s.subjectOverride||'');document.getElementById('e_dateRange').style.display='flex';}
+function openEditTask(tid){const t=tasks.find(t=>t.id===tid);if(!t)return;editCtx={mode:'task',taskId:tid};_fillModal('✏️ Chỉnh sửa công việc',t.name,'08:00','09:00',t.pri,t.dur,t.tag||'',t.dateFrom||'',t.dateTo||'',t.note||'',t.subjectOverride||'');document.getElementById('e_dateRange').style.display='flex';}
+function openEditNew(){if(!tlDate){showToast('⚠️ Chọn ngày trước!');return;}editCtx={mode:'new',ds:tlDate};_fillModal('➕ Thêm vào ngày','','08:00','09:00','med',60,'','','','','');document.getElementById('e_dateRange').style.display='none';}
+function _fillModal(title,name,start,end,pri,dur,tag,dateFrom,dateTo,note,subj){document.getElementById('editTitle').textContent=title;document.getElementById('e_name').value=name;document.getElementById('e_start').value=start;document.getElementById('e_end').value=end;document.getElementById('e_pri').value=pri;document.getElementById('e_dur').value=dur;document.getElementById('e_tag').value=tag;document.getElementById('e_dfrom').value=dateFrom;document.getElementById('e_dto').value=dateTo;document.getElementById('e_note').value=note;document.getElementById('e_subj').value=subj||'';document.getElementById('editConflictAlert').classList.remove('show');document.getElementById('editModal').classList.add('open');}
+function saveEdit(){if(!editCtx)return;const{mode,ds,idx,taskId}=editCtx;if(mode==='task'){const t=tasks.find(t=>t.id===taskId);if(!t)return;saveUndo('Sửa task');t.name=document.getElementById('e_name').value.trim()||t.name;t.pri=document.getElementById('e_pri').value;t.dur=+document.getElementById('e_dur').value||t.dur;t.tag=document.getElementById('e_tag').value.trim();t.dateFrom=document.getElementById('e_dfrom').value;t.dateTo=document.getElementById('e_dto').value;t.note=document.getElementById('e_note').value.trim();t.subjectOverride=document.getElementById('e_subj').value;const{color,subject}=classifyTaskType(t.name,t.subjectOverride);t.color=color;t.subject=t.subjectOverride||subject;DB.set(DB.T.TASKS,tasks);closeEdit();renderTasks();showToast('✅ Đã lưu!');return;}const ns=t2m(document.getElementById('e_start').value),ne=t2m(document.getElementById('e_end').value);if(ne<=ns){alert('Giờ kết thúc phải sau giờ bắt đầu!');return;}saveUndo('Sửa slot');const u={name:document.getElementById('e_name').value.trim()||'Task',start:ns,end:ne,pri:document.getElementById('e_pri').value,tag:document.getElementById('e_tag').value.trim(),dateFrom:document.getElementById('e_dfrom').value,dateTo:document.getElementById('e_dto').value,note:document.getElementById('e_note').value.trim(),subjectOverride:document.getElementById('e_subj').value,color:{high:'#ef4444',med:'#f59e0b',low:'#10b981'}[document.getElementById('e_pri').value]};if(!schedule[ds])schedule[ds]=[];if(mode==='new')schedule[ds].push({...u,kind:'task',done:false,locked:false,tip:`${m2t(ns)}–${m2t(ne)}`});else schedule[ds][idx]={...schedule[ds][idx],...u,tip:`${m2t(ns)}–${m2t(ne)}`};schedule[ds].sort((a,b)=>a.start-b.start);DB.set(DB.T.SCHED,schedule);closeEdit();renderTimeline(ds,dsToDate(ds));renderCalendar();showToast(detectConflicts(ds).length?'⚠️ Có xung đột!':'✅ Đã lưu!');}
+function deleteEditTarget(){if(!editCtx)return;const{mode,ds,idx,taskId}=editCtx;if(mode==='task'){if(!confirm('Xóa?'))return;saveUndo('Xóa task');tasks=tasks.filter(t=>t.id!==taskId);DB.set(DB.T.TASKS,tasks);closeEdit();renderTasks();showToast('🗑️ Đã xóa!');return;}if(!confirm(`Xóa "${schedule[ds]?.[idx]?.name}"?`))return;saveUndo('Xóa slot');schedule[ds].splice(idx,1);DB.set(DB.T.SCHED,schedule);closeEdit();renderTimeline(ds,dsToDate(ds));renderCalendar();showToast('🗑️ Đã xóa!');}
+function closeEdit(){document.getElementById('editModal').classList.remove('open');editCtx=null;}
+
+/* ═══════════════════════════════════════════════════════════
+   SEC-13: JS-AI – PARSER + OLLAMA + CHAT (giữ nguyên v10)
+═══════════════════════════════════════════════════════════ */
+const PARSER=((()=>{
+  const DAY_MAP={'thứ hai':1,'thứ 2':1,'t2':1,'thứ ba':2,'thứ 3':2,'t3':2,'thứ tư':3,'thứ 4':3,'t4':3,'thứ năm':4,'thứ 5':4,'t5':4,'thứ sáu':5,'thứ 6':5,'t6':5,'thứ bảy':6,'thứ 7':6,'t7':6,'chủ nhật':0,'cn':0};
+  const SESSIONS={'sáng sớm':['05:30','09:00'],'buổi sáng':['06:00','12:00'],'sáng':['06:00','12:00'],'buổi trưa':['11:00','14:00'],'trưa':['11:00','14:00'],'buổi chiều':['13:00','18:00'],'chiều':['13:00','18:00'],'buổi tối':['18:00','22:00'],'tối':['18:00','22:00'],'đêm':['21:00','23:59'],'cả ngày':['00:00','23:59']};
+  const SUBJS_NLP=['toán','văn','lý','vật lý','hóa','hóa học','sinh','sinh học','anh','tiếng anh','sử','địa','tin','gdcd','thể dục'];
+  function resolveDate(txt){const t=txt.toLowerCase();if(/hôm nay|sáng nay|chiều nay|tối nay/.test(t))return _offStr(0);if(/ngày mai|sáng mai|chiều mai|tối mai|mai\b/.test(t))return _offStr(1);if(/ngày kia|ngày mốt/.test(t))return _offStr(2);if(/hôm qua/.test(t))return _offStr(-1);const nxt=/tuần sau|tuần tới/.test(t),thisWk=/tuần này/.test(t);for(const[name,dow]of Object.entries(DAY_MAP)){if(!t.includes(name))continue;if(nxt){const m=getMonday(1);m.setDate(m.getDate()+(dow===0?6:dow-1));return dateToStr(m);}if(thisWk){const m=getMonday(0);m.setDate(m.getDate()+(dow===0?6:dow-1));return dateToStr(m);}const td=new Date();td.setHours(12,0,0,0);let diff=dow-td.getDay();if(diff<=0)diff+=7;return _offStr(diff);}return null;}
+  function resolveSession(txt){const t=txt.toLowerCase();for(const[k,[s,e]]of Object.entries(SESSIONS).sort((a,b)=>b[0].length-a[0].length))if(t.includes(k))return{name:k,start:s,end:e};return null;}
+  function resolveSubject(txt){const t=txt.toLowerCase();return SUBJS_NLP.sort((a,b)=>b.length-a.length).find(s=>t.includes(s))||null;}
+  function resolveDuration(txt){const m=txt.match(/(\d+)\s*(phút|p\b)/i);if(m)return+m[1];const h=txt.match(/(\d+)\s*tiếng/i);if(h)return+h[1]*60;return null;}
+  function resolvePri(txt){const t=txt.toLowerCase();if(/(gấp|sắp thi|thi rồi|quan trọng|cao)/.test(t))return'high';if(/(thấp|ít|không cần)/.test(t))return'low';return'med';}
+  function parse(text){const t=text.toLowerCase().trim();const date=resolveDate(t),session=resolveSession(t),subject=resolveSubject(t),dur=resolveDuration(t),pri=resolvePri(t);if(/có gì|lịch|hôm nay|ngày mai|tuần này|cần làm gì/.test(t)&&!/thêm|tạo|bận|nghỉ|ôn|tập trung/.test(t))return{intent:'view',data:{date:date||todayStr()}};if(/bận|không.*học|không rảnh|nghỉ (học|cả ngày)|có hẹn|đi chơi/.test(t))return{intent:'block',data:{date:date||todayStr(),session}};if(/không nghỉ|bỏ nghỉ|học lại|hủy bận|huỷ nghỉ/.test(t))return{intent:'unblock',data:{date:date||todayStr()}};if(/(tập trung|ôn nhiều|ưu tiên|sắp thi)/.test(t)&&subject)return{intent:'boost',data:{subject}};if(/(mệt|quá tải|stress|giảm bớt|bớt lịch)/.test(t))return{intent:'reduce',data:{}};if(/(thêm|tạo|lên lịch|có bài)/.test(t)){let name=text.replace(/^.*(thêm|tạo|lên lịch|có bài)\s*/i,'').replace(/\s*\d+\s*(phút|p\b|tiếng).*/i,'').trim();if(!name&&subject)name=`Ôn ${subject.charAt(0).toUpperCase()+subject.slice(1)}`;if(!name)return null;return{intent:'add_task',data:{name,dur:dur||60,pri,subject,color:classifyTaskType(name).color}};}if(/(lời khuyên|mẹo học|cách học|pomodoro|ôn thi)/.test(t))return{intent:'study_tip',data:{subject}};if(/(bạn là ai|em là ai|smart planner)/.test(t))return{intent:'app_info',data:{}};return null;}
+  return{parse,resolveDate,resolveSession,resolveSubject,resolveDuration};
+}))();
+
+function handleParsed(intent,data){
+  switch(intent){
+    case 'view':{const ds=data.date,dt=dsToDate(ds),evs=schedule[ds]||[];if(!evs.length)return`📅 <strong>${DAY_FULL[dt.getDay()]}, ${dt.getDate()}/${dt.getMonth()+1}</strong>: Chưa có lịch!`;const done=evs.filter(e=>e.done).length;return`📅 <strong>${DAY_FULL[dt.getDay()]}, ${dt.getDate()}/${dt.getMonth()+1}</strong> — ${done}/${evs.length} ✅<br><br>`+evs.filter(e=>e.kind!=='buffer').map(e=>`• ${m2t(e.start)}–${m2t(e.end)}: ${e.name}${e.done?' ✅':''}`).join('<br>');}
+    case 'block':{const{date:ds,session}=data,dt=dsToDate(ds);saveUndo('Đánh dấu bận');if(!schedule[ds])schedule[ds]=[];const lbl=session?`🚫 Bận ${session.name}`:'🚫 Bận cả ngày';schedule[ds]=schedule[ds].filter(x=>!(x.kind==='block'&&x.label_type===lbl));schedule[ds].push({name:lbl,start:t2m(session?session.start:'00:00'),end:t2m(session?session.end:'23:59'),kind:'block',color:'#9ca3af',done:false,label_type:lbl});schedule[ds].sort((a,b)=>a.start-b.start);DB.set(DB.T.SCHED,schedule);renderCalendar();if(tlDate===ds)renderTimeline(ds,dt);return`🚫 Đánh dấu <strong>${DAY_FULL[dt.getDay()]}</strong> (${session?session.name:'cả ngày'}) là bận.`;}
+    case 'unblock':{const{date:ds}=data,dt=dsToDate(ds);saveUndo('Bỏ bận');blocks=blocks.filter(b=>b!==ds);DB.set(DB.T.BLOCKS,blocks);if(schedule[ds])schedule[ds]=schedule[ds].filter(s=>s.kind!=='block');DB.set(DB.T.SCHED,schedule);renderCalendar();if(tlDate===ds)renderTimeline(ds,dt);return`✅ Đã bỏ bận. Nhấn ⚡ để xếp lịch lại.`;}
+    case 'boost':{const{subject}=data;if(!subject)return`📚 Tập trung môn nào?`;saveUndo('Tăng ưu tiên');let cnt=0;tasks.forEach(t=>{if((t.name+' '+(t.tag||'')).toLowerCase().includes(subject)&&t.pri!=='high'){t.pri='high';cnt++;}});DB.set(DB.T.TASKS,tasks);renderTasks();runScheduler();return cnt>0?`🎯 Tăng ưu tiên ${cnt} task môn <strong>${subject}</strong>!`:`⚠️ Chưa có task môn <strong>${subject}</strong>.`;}
+    case 'reduce':{saveUndo('Giảm lịch');let cnt=0;tasks.forEach(t=>{if(t.pri==='high'){t.pri='med';cnt++;}else if(t.pri==='med'){t.pri='low';cnt++;}});DB.set(DB.T.TASKS,tasks);renderTasks();runScheduler();return`😌 Giảm ưu tiên ${cnt} task. Nghỉ ngơi tốt nhé! 💙`;}
+    case 'add_task':{const{name,dur,pri,color}=data;saveUndo('Thêm task qua chat');tasks.push({id:Date.now(),name,dur:dur||60,pri,dateFrom:'',dateTo:'',tag:'',subject:'Khác',color,done:false,subjectOverride:''});DB.set(DB.T.TASKS,tasks);renderTasks();runScheduler();return`✅ Đã thêm: <strong>${name}</strong> (${dur||60}p)`;}
+    case 'study_tip':{const tips=['🍅 <strong>Pomodoro:</strong> học 25p – nghỉ 5p. Não cần thời gian xử lý!','🧠 <strong>Active Recall:</strong> tự đặt câu hỏi rồi trả lời – nhớ lâu hơn!','📅 <strong>Spaced Repetition:</strong> ôn sau 1 ngày → 3 ngày → 1 tuần.','✍️ <strong>Feynman:</strong> giải thích như dạy người khác.','🌙 <strong>Ngủ đủ 7-8h:</strong> não củng cố ký ức khi ngủ!','🔄 <strong>Xen kẽ môn:</strong> Toán → Văn → Anh nhớ lâu hơn cùng một môn!'];return`💡 ${tips[Math.floor(Math.random()*tips.length)]}<br>Hỏi thêm nhé 😊`;}
+    case 'app_info':return`📚 <strong>Smart Student Planner v11</strong> – Xếp lịch thông minh theo độ khó môn học! 🚀`;
+    default:return null;
+  }
+}
+
+const CACHE=new Map(),CACHE_TTL=5*60*1000;
+function cGet(k){const e=CACHE.get(k);if(!e)return null;if(Date.now()-e.t>CACHE_TTL){CACHE.delete(k);return null;}return e.v;}
+function cSet(k,v){CACHE.set(k,{v,t:Date.now()});}
+function buildSystemPrompt(){const ds=todayStr(),dt=dsToDate(ds);const todayEvs=(schedule[ds]||[]).filter(e=>e.kind!=='buffer').slice(0,4).map(e=>`${m2t(e.start)}:${e.name}`).join(',')||'trống';const pending=tasks.filter(t=>!t.done).slice(0,3).map(t=>t.name).join(',')||'không có';return`Trợ lý lịch học tiếng Việt. Hôm nay ${DAY_FULL[dt.getDay()]} ${ds}. Lịch: ${todayEvs}. Tasks: ${pending}.Trả lời CHỈ JSON hợp lệ:{"action":"add_task|block_time|unblock_time|suggest","auto_apply":true,"changes":[{"name":"","start":"HH:MM","end":"HH:MM","date":"YYYY-MM-DD","pri":"high|med|low"}],"explain":"...tối đa 40 ký tự"}`;}
+async function callAI(messages,onToken,onDone){if(!ollamaOk){onDone(null);return;}const ctrl=new AbortController(),tid=setTimeout(()=>ctrl.abort(),40000);try{const res=await fetch(`${ollamaUrl}/api/chat`,{method:'POST',headers:{'Content-Type':'application/json'},signal:ctrl.signal,body:JSON.stringify({model:MODEL,messages:[{role:'system',content:buildSystemPrompt()},...messages.slice(-6)],stream:true,options:{temperature:0.3,num_predict:220,top_p:0.9,repeat_penalty:1.1}})});clearTimeout(tid);if(!res.ok){onDone(null);return;}const rdr=res.body.getReader(),dec=new TextDecoder();let full='';while(true){const{done,value}=await rdr.read();if(done)break;for(const ln of dec.decode(value,{stream:true}).split('\n').filter(Boolean)){try{const d=JSON.parse(ln);const tok=d.message?.content||'';if(tok){full+=tok;onToken(tok);}if(d.done){onDone(full);return;}}catch{}}}onDone(full);}catch(e){clearTimeout(tid);onDone(null);}}
+async function checkOllama(verbose=false){const dot=document.getElementById('sDot'),txt=document.getElementById('sTxt');dot.className='sdot dot-chk';txt.textContent='Kết nối…';try{const ctrl=new AbortController();setTimeout(()=>ctrl.abort(),4000);const r=await fetch(`${ollamaUrl}/api/tags`,{signal:ctrl.signal});if(r.ok){ollamaOk=true;dot.className='sdot dot-ok';txt.textContent='✓ phi3:mini';if(verbose){const d=await r.json();const has=(d.models||[]).some(m=>m.name.includes('phi3'));const sl=document.getElementById('setupLog');if(sl)sl.textContent=has?'✅ phi3:mini sẵn sàng!':'⚠️ Chạy: ollama pull phi3:mini';}return true;}}catch{}ollamaOk=false;dot.className='sdot dot-err';txt.textContent='✗ Offline';if(verbose){const sl=document.getElementById('setupLog');if(sl)sl.textContent='❌ Không kết nối.';}return false;}
+async function testChat(){const sl=document.getElementById('setupLog');if(sl)sl.textContent='⏳ Đang test…';const ok=await checkOllama(false);if(!ok){if(sl)sl.textContent='❌ Ollama offline!';return;}let r='';await callAI([{role:'user',content:'Chào! Trả lời JSON ngắn.'}],tok=>r+=tok,()=>{if(sl)sl.textContent=r?`✅ "${r.trim().slice(0,80)}"…`:'❌ Chưa tải model!';});}
+function quickSend(el){document.getElementById('chatIn').value=el.textContent;sendChat();}
+async function sendChat(){const inp=document.getElementById('chatIn'),text=inp.value.trim();if(!text)return;inp.value='';addMsg('u',text);const hist=DB.get(DB.T.CHAT,[]);hist.push({role:'user',content:text,ts:Date.now()});DB.set(DB.T.CHAT,hist);document.getElementById('btnSend').disabled=true;const parsed=PARSER.parse(text);if(parsed){setBadge('fast');const reply=handleParsed(parsed.intent,parsed.data);if(reply){addMsg('a',reply+`<span class="src-badge src-fast">⚡ Tức thì</span>`);document.getElementById('btnSend').disabled=false;return;}}setBadge('ai');const ck=text.toLowerCase().trim(),cached=cGet(ck);if(cached){addMsg('a',cached+`<span class="src-badge src-cache">📦 Cache</span>`);document.getElementById('btnSend').disabled=false;return;}if(!ollamaOk){addMsg('a',`🤖 Ollama offline. Thử: "Thêm bài Toán 60 phút"…<span class="src-badge src-fast">📖</span>`);document.getElementById('btnSend').disabled=false;return;}const bubble=addMsg('a','<span class="dots"><span></span><span></span><span></span></span>');let full='';const ctx=DB.get(DB.T.CHAT,[]).slice(-6).map(m=>({role:m.role,content:m.content}));await callAI(ctx,tok=>{full+=tok;bubble.innerHTML=renderAIText(full)+'<span class="cursor"></span>';scrollChat();},result=>{if(!result)bubble.innerHTML='❌ phi3:mini không phản hồi.';else{try{const clean=full.replace(/```json|```/g,'').trim();const obj=JSON.parse(clean);if(obj&&obj.action){applyAIAction(obj,bubble);}else{bubble.innerHTML=renderAIText(full)+`<span class="src-badge src-ai">🤖 AI</span>`;cSet(ck,full);}}catch{bubble.innerHTML=renderAIText(full)+`<span class="src-badge src-ai">🤖 AI</span>`;cSet(ck,full);}const all=DB.get(DB.T.CHAT,[]);all.push({role:'assistant',content:full,ts:Date.now()});DB.set(DB.T.CHAT,all);}document.getElementById('btnSend').disabled=false;});}
+function applyAIAction(action,bubble){const{action:act,changes=[],explain='',auto_apply}=action;if(!auto_apply){bubble.innerHTML=`💬 <strong>${explain}</strong><br><small style="color:var(--txt2)">AI không chắc – hãy thực hiện thủ công.</small>`;return;}saveUndo(`AI: ${explain||act}`);if(act==='add_task'){changes.forEach(c=>{const{color}=classifyTaskType(c.name||'');tasks.push({id:Date.now()+Math.random(),name:c.name||'Task',dur:60,pri:c.pri||'med',dateFrom:'',dateTo:'',tag:'',subject:'Khác',color,done:false});});DB.set(DB.T.TASKS,tasks);renderTasks();runScheduler();}else if(act==='block_time'){changes.forEach(c=>{const ds=c.date||todayStr();if(!schedule[ds])schedule[ds]=[];schedule[ds].push({name:c.name||'🚫 Bận',start:t2m(c.start||'00:00'),end:t2m(c.end||'23:59'),kind:'block',color:'#9ca3af',done:false});schedule[ds].sort((a,b)=>a.start-b.start);});DB.set(DB.T.SCHED,schedule);renderCalendar();}else if(act==='unblock_time'){changes.forEach(c=>{const ds=c.date||todayStr();if(schedule[ds])schedule[ds]=schedule[ds].filter(s=>s.kind!=='block');});DB.set(DB.T.SCHED,schedule);renderCalendar();}bubble.innerHTML=`✅ <strong>${explain}</strong><span class="src-badge src-ai">🤖 AI</span>`;}
+function renderAIText(t){return t.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/`(.*?)`/g,'<code style="background:var(--surf3);padding:0 4px;border-radius:4px">$1</code>').replace(/\n/g,'<br>');}
+function setBadge(mode){const b=document.getElementById('parseModeBadge');if(!b)return;b.className='parse-mode '+(mode==='fast'?'mode-local':'mode-ai');b.textContent=mode==='fast'?'⚡ Tức thì':'🤖 phi3:mini';}
+function addMsg(role,html){const box=document.getElementById('chatBox');const div=document.createElement('div');div.className='msg '+role;div.innerHTML=html;box.appendChild(div);scrollChat();return div;}
+function scrollChat(){document.getElementById('chatBox').scrollTop=9999;}
+function clearChatHistory(){if(!confirm('Xóa chat?'))return;DB.set(DB.T.CHAT,[]);document.getElementById('chatBox').innerHTML='';addMsg('sys','🗑️ Đã xóa.');}
+function loadChatHistory(){DB.get(DB.T.CHAT,[]).slice(-16).forEach(m=>addMsg(m.role==='user'?'u':'a',renderAIText(m.content)));}
+
+/* ═══════════════════════════════════════════════════════════
+   SEC-14: JS-STATS (giữ nguyên v10, thêm cột difficulty)
+═══════════════════════════════════════════════════════════ */
+let currentStatTab='day';
+function switchStatTab(tab,btn){currentStatTab=tab;document.querySelectorAll('.stat-tab').forEach(b=>b.classList.toggle('on',b===btn));renderStats();}
+function renderStats(){const c=document.getElementById('statsContent');switch(currentStatTab){case'day':c.innerHTML=renderStatsDay();break;case'week':c.innerHTML=renderStatsWeek();break;case'month':c.innerHTML=renderStatsMonth();break;case'year':c.innerHTML=renderStatsYear();break;}}
+function getSchedForDate(ds){return(schedule[ds]||[]).filter(e=>e.kind==='task');}
+function minsForDate(ds){return getSchedForDate(ds).reduce((s,e)=>s+(e.end-e.start),0);}
+function doneForDate(ds){return getSchedForDate(ds).filter(e=>e.done).length;}
+function totalForDate(ds){return getSchedForDate(ds).length;}
+let statDayOffset=0;
+function changeDayStats(d,mode=''){if(mode==='today')statDayOffset=0;else statDayOffset+=d;const dt=new Date();dt.setHours(12,0,0,0);dt.setDate(dt.getDate()+statDayOffset);tlDate=dateToStr(dt);renderStats();}
+function renderStatsDay(){const ds=tlDate||todayStr();const dt=dsToDate(ds);const slots=getSchedForDate(ds);const done=slots.filter(e=>e.done).length,tot=slots.length,mins=minsForDate(ds),pct=tot?Math.round(done/tot*100):0;const cogLoad=calcDayCogLoad(schedule[ds]||[]);const bySubj={};slots.forEach(s=>{const sub=s.tag||'Khác';bySubj[sub]=(bySubj[sub]||0)+(s.end-s.start);});const mx=Math.max(...Object.values(bySubj),1);return`<div class="card"><div class="ct">📆 Thống kê ngày – ${DAY_FULL[dt.getDay()]} ${ds}</div><div style="display:flex;gap:6px;margin-bottom:6px"><button class="btn bgh sm" onclick="changeDayStats(-1)">◀ Hôm trước</button><button class="btn bgh sm" onclick="changeDayStats(1)">Hôm sau ▶</button><button class="btn bp sm" onclick="changeDayStats(0,'today')">Hôm nay</button></div><div class="stat-cards"><div class="sc"><div class="sv">${tot}</div><div class="sl">📝 Tổng task</div></div><div class="sc"><div class="sv">${done}</div><div class="sl">✅ Xong</div></div><div class="sc"><div class="sv">${pct}%</div><div class="sl">📊 Tỉ lệ</div></div><div class="sc"><div class="sv">${Math.round(mins/60*10)/10}h</div><div class="sl">⏰ Học</div></div><div class="sc"><div class="sv">${cogLoad.toFixed(1)}</div><div class="sl">🧠 Tải nhận thức</div></div></div><div class="prog"><div class="prog-b" style="width:${pct}%"></div></div></div><div class="card"><div class="ct">📚 Phân bổ môn học</div>${Object.entries(bySubj).sort((a,b)=>b[1]-a[1]).map(([sub,dur])=>{const cls=classifyTaskType('',sub==='Khác'?'':sub);return`<div class="stat-bar-row"><div class="lbl">${cls.emoji||'📖'} ${sub}</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(dur/mx*100)}%;background:${cls.color||'var(--pri)'}"></div></div><div class="val">${Math.round(dur/60*10)/10}h</div></div>`;}).join('')||'<p style="color:var(--txt2);font-size:.82rem">Không có dữ liệu.</p>'}</div>`;}
+function renderStatsWeek(){const mon=getMonday(weekOff);const days=Array.from({length:7},(_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);return dateToStr(d);});const end=new Date(mon);end.setDate(mon.getDate()+6);const maxMins=Math.max(...days.map(ds=>minsForDate(ds)),1);return`<div class="card"><div class="ct">🗓️ Thống kê tuần ${mon.getDate()}/${mon.getMonth()+1} – ${end.getDate()}/${end.getMonth()+1}</div><div style="display:flex;gap:6px;margin-bottom:10px"><button class="btn bgh sm" onclick="weekOff--;renderStats()">◀ Tuần trước</button><button class="btn bgh sm" onclick="weekOff++;renderStats()">Tuần sau ▶</button><button class="btn bp sm" onclick="weekOff=0;renderStats()">Tuần này</button></div>${days.map(ds=>{const dt=dsToDate(ds);const tot=totalForDate(ds),done=doneForDate(ds),mins=minsForDate(ds);return`<div class="stat-bar-row"><div class="lbl">${DAY_VI[dt.getDay()]} ${dt.getDate()}/${dt.getMonth()+1}</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(mins/maxMins*100)}%;background:${ds===todayStr()?'var(--acc)':'var(--pri)'}"></div></div><div class="val">${Math.round(mins/60*10)/10}h <span style="font-size:.65rem;color:var(--txt2)">${done}/${tot}</span></div></div>`;}).join('')}</div><div class="card"><div class="ct">📊 Tổng kết tuần</div><div class="stat-cards"><div class="sc"><div class="sv">${days.reduce((s,ds)=>s+totalForDate(ds),0)}</div><div class="sl">Tổng task</div></div><div class="sc"><div class="sv">${days.reduce((s,ds)=>s+doneForDate(ds),0)}</div><div class="sl">Đã xong</div></div><div class="sc"><div class="sv">${Math.round(days.reduce((s,ds)=>s+minsForDate(ds),0)/60*10)/10}h</div><div class="sl">Tổng học</div></div></div></div>`;}
+function renderStatsMonth(){const now=new Date(),year=now.getFullYear(),month=now.getMonth(),daysInMonth=new Date(year,month+1,0).getDate();const weeks=[];for(let w=0;w<5;w++){const wDays=[];for(let d=1;d<=daysInMonth;d++){if(Math.floor((d-1)/7)===w)wDays.push(dateToStr(new Date(year,month,d)));}if(wDays.length)weeks.push(wDays);}const allDays=Array.from({length:daysInMonth},(_,i)=>dateToStr(new Date(year,month,i+1)));const totalMins=allDays.reduce((s,ds)=>s+minsForDate(ds),0),totalDone=allDays.reduce((s,ds)=>s+doneForDate(ds),0),totalTasks=allDays.reduce((s,ds)=>s+totalForDate(ds),0);const MONTH_VI=['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];const maxWeekMins=Math.max(...weeks.map(w=>w.reduce((s,ds)=>s+minsForDate(ds),0)),1);return`<div class="card"><div class="ct">📅 Thống kê ${MONTH_VI[month]} ${year}</div><div class="stat-cards"><div class="sc"><div class="sv">${totalTasks}</div><div class="sl">Tổng task</div></div><div class="sc"><div class="sv">${totalDone}</div><div class="sl">Đã xong</div></div><div class="sc"><div class="sv">${totalTasks?Math.round(totalDone/totalTasks*100):0}%</div><div class="sl">Tỉ lệ</div></div><div class="sc"><div class="sv">${Math.round(totalMins/60)}h</div><div class="sl">Tổng học</div></div></div>${weeks.map((w,i)=>{const mins=w.reduce((s,ds)=>s+minsForDate(ds),0),done=w.reduce((s,ds)=>s+doneForDate(ds),0),tot=w.reduce((s,ds)=>s+totalForDate(ds),0);return`<div class="stat-bar-row"><div class="lbl">Tuần ${i+1}</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(mins/maxWeekMins*100)}%;background:var(--pri)"></div></div><div class="val">${Math.round(mins/60*10)/10}h <span style="font-size:.65rem;color:var(--txt2)">${done}/${tot}</span></div></div>`;}).join('')}</div>`;}
+function renderStatsYear(){const year=new Date().getFullYear();const MONTH_SHORT=['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];const monthData=Array.from({length:12},(_,m)=>{const daysInMonth=new Date(year,m+1,0).getDate();const days=Array.from({length:daysInMonth},(_,i)=>dateToStr(new Date(year,m,i+1)));return{mins:days.reduce((s,ds)=>s+minsForDate(ds),0),done:days.reduce((s,ds)=>s+doneForDate(ds),0),total:days.reduce((s,ds)=>s+totalForDate(ds),0)};});const maxMins=Math.max(...monthData.map(d=>d.mins),1);const totalYear={mins:monthData.reduce((s,d)=>s+d.mins,0),done:monthData.reduce((s,d)=>s+d.done,0),total:monthData.reduce((s,d)=>s+d.total,0)};const bySubj={};tasks.forEach(t=>{const sub=t.subjectOverride||t.subject||'Khác';bySubj[sub]=(bySubj[sub]||0)+t.dur;});const mxSubj=Math.max(...Object.values(bySubj),1);return`<div class="card"><div class="ct">📊 Tổng quan năm ${year}</div><div class="stat-cards"><div class="sc"><div class="sv">${totalYear.total}</div><div class="sl">Tổng task</div></div><div class="sc"><div class="sv">${totalYear.done}</div><div class="sl">Đã xong</div></div><div class="sc"><div class="sv">${Math.round(totalYear.mins/60)}h</div><div class="sl">Tổng học</div></div></div></div><div class="card"><div class="ct">📈 Giờ học theo tháng</div>${monthData.map((d,m)=>`<div class="stat-bar-row"><div class="lbl">${MONTH_SHORT[m]}</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(d.mins/maxMins*100)}%;background:${m===new Date().getMonth()?'var(--acc)':'var(--pri)'}"></div></div><div class="val">${Math.round(d.mins/60)}h</div></div>`).join('')}</div><div class="card"><div class="ct">📚 Phân bổ môn học (năm)</div>${Object.entries(bySubj).sort((a,b)=>b[1]-a[1]).map(([sub,dur])=>{const found=SUBJECT_MAP.find(([,s])=>s===sub);return`<div class="stat-bar-row"><div class="lbl">${found?found[4]:'📖'} ${sub}</div><div class="bar-wrap"><div class="bar-fill" style="width:${Math.round(dur/mxSubj*100)}%;background:${found?found[3]:'var(--pri)'}"></div></div><div class="val">${Math.round(dur/60*10)/10}h</div></div>`;}).join('')||'<p style="color:var(--txt2);font-size:.82rem">Thêm công việc để xem thống kê!</p>'}</div>`;}
+
+/* ═══════════════════════════════════════════════════════════
+   SEC-15: JS-SETUP – DEBUG + TEST + DEMO + DIFF TABLE (v11)
+═══════════════════════════════════════════════════════════ */
+function toggleDebugPanel(){const show=document.getElementById('devShowDebug').checked;document.getElementById('debugCard').style.display=show?'block':'none';if(show)refreshDebugPanel();}
+function refreshDebugPanel(){const mon=getMonday(weekOff),end=new Date(mon);end.setDate(mon.getDate()+6);document.getElementById('debugPanel').innerHTML=`<strong>APP_VERSION:</strong> ${APP_VERSION}\n<strong>weekOff:</strong> ${weekOff} | <strong>Mon–Sun:</strong> ${dateToStr(mon)} – ${dateToStr(end)}\n<strong>Today:</strong> ${todayStr()} | <strong>tlDate:</strong> ${tlDate||'null'}\n<strong>Ollama:</strong> ${ollamaOk?'✅':'❌'} @ ${ollamaUrl}\n<strong>events:</strong> ${events.length} | <strong>tasks:</strong> ${tasks.length} (done:${tasks.filter(t=>t.done).length})\n<strong>schedule days:</strong> ${Object.keys(schedule).length} | <strong>lastRun:</strong> ${lastSchedulerRun||'never'}\n<strong>SMART.HARD_DIFF_THRESHOLD:</strong> ${SMART.HARD_DIFF_THRESHOLD} | <strong>MAX_HARD_STREAK:</strong> ${SMART.MAX_HARD_STREAK}`;}
+
+// Bảng độ khó môn học – MỚI v11
+function buildDiffTable(){
+  const el=document.getElementById('diffTable');
+  if (!el) return;
+  const rows = SUBJECT_MAP.map(([,subj,type,color,emoji,diff,cog,bestTime])=>{
+    const bestTimeLabel = {morning:'🌅 Sáng sớm',afternoon:'🌤️ Chiều',evening:'🌙 Tối',auto:'🤖 Tự động'}[bestTime]||bestTime;
+    return `<div class="li" style="margin-bottom:6px">
+      <div class="dot" style="background:${color}"></div>
+      <div class="n" style="font-size:.82rem">${emoji} <strong>${subj}</strong></div>
+      <span class="diff-badge diff-${diff}">${'★'.repeat(diff)} ${diff}/5</span>
+      <span style="font-size:.7rem;color:var(--txt2);min-width:90px;text-align:right">${bestTimeLabel}</span>
+    </div>`;
+  }).join('');
+  el.innerHTML=`<div style="font-size:.75rem;color:var(--txt2);margin-bottom:8px">★ = độ khó · Giờ học tốt nhất theo nghiên cứu nhận thức</div>${rows}`;
+}
+
+function runTestSuite(){
+  const results=[];
+  function assert(name,cond,detail=''){results.push({name,pass:!!cond,detail});}
+  // Test cũ
+  assert('T1: getMonday trả về thứ Hai',getMonday(0).getDay()===1);
+  const ds=dateToStr(getMonday(0));assert('T2: dateToStr đúng định dạng',/^\d{4}-\d{2}-\d{2}$/.test(ds),ds);
+  assert('T3: t2m/m2t roundtrip',m2t(t2m('07:30'))==='07:30');
+  // Test v11: difficulty
+  const clsT=classifyTaskType('Làm bài tập Toán');
+  assert('T4: Toán → difficulty=5',clsT.difficulty===5,`difficulty=${clsT.difficulty}`);
+  assert('T5: Toán → bestTime=morning',clsT.bestTime==='morning',`bestTime=${clsT.bestTime}`);
+  const clsV=classifyTaskType('Viết văn nghị luận');
+  assert('T6: Văn → type=creative',clsV.type==='creative',`type=${clsV.type}`);
+  assert('T7: Văn → bestTime=afternoon',clsV.bestTime==='afternoon',`bestTime=${clsV.bestTime}`);
+  const clsA=classifyTaskType('Ôn từ vựng Tiếng Anh');
+  assert('T8: Anh → type=memory',clsA.type==='memory',`type=${clsA.type}`);
+  assert('T9: Anh → bestTime=evening',clsA.bestTime==='evening',`bestTime=${clsA.bestTime}`);
+  const clsTD=classifyTaskType('Chạy bộ thể dục');
+  assert('T10: Thể dục → difficulty=1',clsTD.difficulty===1,`difficulty=${clsTD.difficulty}`);
+  // Test getPrefWindow
+  const winT=getPrefWindow({name:'Toán',pref:'auto',subjectOverride:''});
+  assert('T11: Toán pref=auto → HARD_WINDOW (6h-10h)',winT[0]?.from===6*60&&winT[0]?.to===10*60,JSON.stringify(winT[0]));
+  const winV=getPrefWindow({name:'Viết văn',pref:'auto',subjectOverride:''});
+  assert('T12: Văn pref=auto → CREATIVE_WINDOW (14h-17h)',winV[0]?.from===14*60,JSON.stringify(winV[0]));
+  // Test fatigueScore
+  const mockSlots=[
+    {kind:'task',name:'Toán',subjectOverride:''},
+    {kind:'task',name:'Vật Lý',subjectOverride:''}
+  ];
+  assert('T13: 2 môn khó liên tiếp → fatigueScore tăng cao',fatigueScore(mockSlots)>=30,`score=${fatigueScore(mockSlots)}`);
+  const pass=results.filter(r=>r.pass).length,total=results.length;
+  document.getElementById('testResults').innerHTML=
+    `<div class="${pass===total?'tr-pass':'tr-info'}" style="font-size:.9rem;margin-bottom:10px">${pass===total?'🎉':'⚠️'} ${pass}/${total} kiểm tra thành công</div>`+
+    results.map(r=>`<div class="${r.pass?'tr-pass':'tr-fail'}">${r.pass?'✅':'❌'} ${r.name}${r.detail?` <span class="tr-info">— ${r.detail}</span>`:''}</div>`).join('');
+  document.getElementById('testOverlay').classList.add('open');
+}
+function closeTestOverlay(){document.getElementById('testOverlay').classList.remove('open');}
+
+function loadDemoData(){
+  if(!confirm('Tải demo sẽ XÓA toàn bộ dữ liệu hiện tại. Tiếp tục?'))return;
+  events=[
+    {id:1,name:'🏫 Đi học',type:'fixed',start:'06:30',end:'11:30',repeat:[1,2,3,4,5],pri:'high',color:'#3b82f6',locked:true},
+    {id:2,name:'🍚 Ăn trưa',type:'flex',eStart:'11:30',lEnd:'13:30',dur:45,repeat:[0,1,2,3,4,5,6],pri:'med',color:'#f59e0b'},
+    {id:3,name:'📖 Học thêm Toán',type:'fixed',start:'13:30',end:'15:30',repeat:[2,4],pri:'high',color:'#ef4444',locked:true},
+    {id:4,name:'📖 Học thêm Anh',type:'fixed',start:'15:30',end:'17:30',repeat:[3],pri:'high',color:'#3b82f6',locked:true},
+    {id:5,name:'🏃 Thể dục',type:'flex',eStart:'17:00',lEnd:'18:30',dur:40,repeat:[1,3,5],pri:'med',color:'#84cc16'},
+    {id:6,name:'🍽️ Ăn tối',type:'flex',eStart:'18:00',lEnd:'19:30',dur:40,repeat:[0,1,2,3,4,5,6],pri:'med',color:'#f97316'},
+    {id:7,name:'😴 Ngủ',type:'fixed',start:'22:00',end:'23:59',repeat:[0,1,2,3,4,5,6],pri:'high',color:'#8b5cf6',locked:true},
+    {id:8,name:'☀️ Dậy sáng',type:'fixed',start:'06:00',end:'06:30',repeat:[0,1,2,3,4,5,6],pri:'high',color:'#f59e0b',locked:true},
+  ];
+  const twoWeeksLater=_offStr(14);
+  tasks=[
+    {id:101,name:'Làm 5 bài tập Toán chương 2',dur:60,pri:'high',dateFrom:todayStr(),dateTo:_offStr(7),tag:'#toán',subject:'Toán',color:'#ef4444',pref:'auto',done:false,subjectOverride:''},
+    {id:102,name:'Viết văn nghị luận xã hội',dur:45,pri:'med',dateFrom:todayStr(),dateTo:_offStr(5),tag:'#ngữ_văn',subject:'Ngữ Văn',color:'#ec4899',pref:'auto',done:false,subjectOverride:''},
+    {id:103,name:'Ôn từ vựng Tiếng Anh unit 5-6',dur:30,pri:'med',dateFrom:todayStr(),dateTo:twoWeeksLater,tag:'#tiếng_anh',subject:'Tiếng Anh',color:'#3b82f6',pref:'auto',done:false,subjectOverride:''},
+    {id:104,name:'Giải bài tập Vật Lý cơ học',dur:50,pri:'high',dateFrom:todayStr(),dateTo:_offStr(3),tag:'#vật_lý',subject:'Vật Lý',color:'#f97316',pref:'auto',done:false,subjectOverride:''},
+    {id:105,name:'Học thuộc bài Hóa hữu cơ',dur:40,pri:'med',dateFrom:todayStr(),dateTo:_offStr(7),tag:'#hóa_học',subject:'Hóa Học',color:'#8b5cf6',pref:'auto',done:false,subjectOverride:''},
+    {id:106,name:'Ôn Lịch Sử chiến tranh VN',dur:35,pri:'low',dateFrom:todayStr(),dateTo:twoWeeksLater,tag:'#lịch_sử',subject:'Lịch Sử',color:'#d97706',pref:'auto',done:false,subjectOverride:''},
+    {id:107,name:'Học bản đồ Địa Lý châu Á',dur:30,pri:'low',dateFrom:todayStr(),dateTo:twoWeeksLater,tag:'#địa_lý',subject:'Địa Lý',color:'#16a34a',pref:'auto',done:false,subjectOverride:''},
+    {id:108,name:'Làm bài tập Toán đại số',dur:60,pri:'high',dateFrom:todayStr(),dateTo:_offStr(4),tag:'#toán',subject:'Toán',color:'#ef4444',pref:'auto',done:false,subjectOverride:''},
+    {id:109,name:'Luyện đọc hiểu Tiếng Anh',dur:30,pri:'med',dateFrom:todayStr(),dateTo:twoWeeksLater,tag:'#tiếng_anh',subject:'Tiếng Anh',color:'#3b82f6',pref:'auto',done:false,subjectOverride:''},
+    {id:110,name:'Ôn Sinh Học di truyền',dur:40,pri:'med',dateFrom:todayStr(),dateTo:_offStr(10),tag:'#sinh_học',subject:'Sinh Học',color:'#10b981',pref:'auto',done:false,subjectOverride:''},
+  ];
+  blocks=[];
+  DB.set(DB.T.EVENTS,events);DB.set(DB.T.TASKS,tasks);DB.set(DB.T.BLOCKS,blocks);DB.set(DB.T.SCHED,{});schedule={};
+  renderEvents();renderTasks();runScheduler();
+  goTo('cal',document.querySelector('.tab'));
+  showToast('✅ Demo đã tải! Toán/Lý/Hóa được xếp buổi sáng 📅');
+}
+function resetAllData(){if(!confirm('Xóa TOÀN BỘ dữ liệu?'))return;Object.values(DB.T).forEach(k=>localStorage.removeItem(k));location.reload();}
+
+/* ═══════════════════════════════════════════════════════════
+   SEC-16: JS-INIT
+═══════════════════════════════════════════════════════════ */
+function goTo(name,btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('on'));
+  document.getElementById('pg-'+name).classList.add('on');
+  btn.classList.add('on');
+  if(name==='stats')renderStats();
+  if(name==='setup'){refreshDebugPanel();buildDiffTable();}
+}
+document.getElementById('tabs').addEventListener('keydown',e=>{const tabs=[...document.querySelectorAll('#tabs .tab')];const cur=tabs.indexOf(document.activeElement);if(cur<0)return;if(e.key==='ArrowRight'){e.preventDefault();tabs[(cur+1)%tabs.length].focus();}if(e.key==='ArrowLeft'){e.preventDefault();tabs[(cur-1+tabs.length)%tabs.length].focus();}});
+function toggleDark(){const d=document.documentElement.dataset.theme==='dark';document.documentElement.dataset.theme=d?'light':'dark';document.getElementById('btnDark').textContent=d?'🌙':'☀️';DB.cfg('dark',!d);}
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.style.display='block';clearTimeout(t._t);t._t=setTimeout(()=>t.style.display='none',2800);}
+function cp(txt){navigator.clipboard?.writeText(txt).then(()=>showToast('✅ Copied!')).catch(()=>{const e=document.createElement('textarea');e.value=txt;document.body.appendChild(e);e.select();document.execCommand('copy');e.remove();showToast('✅ Copied!');});}
+function saveOUrl(){ollamaUrl=document.getElementById('oUrl').value.trim()||'http://localhost:11434';DB.cfg('oUrl',ollamaUrl);checkOllama(true);}
+function buildPickers(){const dp=document.getElementById('dayPick');dp.innerHTML=['CN','T2','T3','T4','T5','T6','T7'].map((d,i)=>`<div class="dchip" data-day="${i}" onclick="this.classList.toggle('on')">${d}</div>`).join('');[1,2,3,4,5].forEach(i=>dp.children[i].classList.add('on'));document.getElementById('colPick').innerHTML=COLORS.map((c,i)=>`<div class="copt ${i===0?'on':''}" style="background:${c}" data-color="${c}" onclick="document.querySelectorAll('.copt').forEach(e=>e.classList.remove('on'));this.classList.add('on')"></div>`).join('');}
+function renderAll(){renderCalendar();renderEvents();renderTasks();if(tlDate)renderTimeline(tlDate,dsToDate(tlDate));}
+
+function init(){
+  checkVersion();
+  if(DB.cfg('dark')){document.documentElement.dataset.theme='dark';document.getElementById('btnDark').textContent='☀️';}
+  ollamaUrl=DB.cfg('oUrl')||'http://localhost:11434';
+  document.getElementById('oUrl').value=ollamaUrl;
+  const devKeep=document.getElementById('devKeepStorage');
+  if(devKeep){devKeep.checked=localStorage.getItem('ssp_dev_keep')==='1';devKeep.addEventListener('change',()=>{localStorage.setItem('ssp_dev_keep',devKeep.checked?'1':'0');showToast(devKeep.checked?'⚠️ Sẽ giữ localStorage':'✅ Sẽ xóa localStorage');});}
+  const tomorrow=new Date();tomorrow.setDate(tomorrow.getDate()+1);
+  document.getElementById('tk_dfrom').value=todayStr();
+  document.getElementById('tk_dto').value=dateToStr(tomorrow);
+  buildPickers();buildSubjectBtns();
+  const savedUndo=DB.get(DB.T.UNDO,null);
+  if(savedUndo){undoSnapshot=savedUndo;document.getElementById('btnUndo').style.display='flex';}
+  renderEvents();renderTasks();renderCalendar();
+  loadChatHistory();
+  if(!DB.get(DB.T.CHAT,[]).length){
+    addMsg('a',`👋 Xin chào! Mình là AI của <strong>Smart Student Planner v11</strong>.<br><br>
+🧠 <strong>Mới v11 – Xếp lịch theo độ khó:</strong><br>
+• 🔴 <strong>Toán/Lý/Hóa</strong> (★★★★★) → Sáng sớm 6h–10h khi não tỉnh táo nhất<br>
+• 🟡 <strong>Văn/Mỹ thuật</strong> (★★★) → Chiều 14h–17h khi sáng tạo tốt nhất<br>
+• 🟢 <strong>Anh/Sử/Địa</strong> (★★★) → Tối 20h–22h (spaced repetition trước khi ngủ)<br>
+• 🏃 <strong>Thể dục</strong> → Sáng sớm hoặc chiều tối<br>
+• Sau 2 môn khó → tự động nghỉ 15p!<br><br>
+Thử <strong>Load Demo Data</strong> ở ⚙️ Cài đặt để xem kết quả! 🚀`);
+  }
+  setTimeout(()=>checkOllama(false),800);
+  console.log(`📚 Smart Student Planner AI v${APP_VERSION} – Difficulty-aware scheduler ready!`);
+}
+init();
+</script>
+</body>
+</html>
